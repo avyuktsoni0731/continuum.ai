@@ -502,3 +502,314 @@ async def create_pull_request(
         # Fetch full PR details
         return await get_pull_request(pr_number, owner, repo)
 
+
+async def update_pull_request(
+    pr_number: int,
+    title: str | None = None,
+    body: str | None = None,
+    state: str | None = None,
+    base: str | None = None,
+    owner: str | None = None,
+    repo: str | None = None
+) -> GitHubPRDetail:
+    """
+    Update an existing pull request.
+    
+    Args:
+        pr_number: PR number
+        title: New title (optional)
+        body: New description/body (optional)
+        state: New state - "open" or "closed" (optional)
+        base: New base branch (optional)
+        owner: Repository owner (default: from env)
+        repo: Repository name (default: from env)
+    
+    Returns:
+        Updated PR details
+    """
+    headers = _get_github_headers()
+    if not owner or not repo:
+        owner, repo = _get_default_repo()
+    
+    payload = {}
+    
+    if title:
+        payload["title"] = title
+    if body is not None:  # Allow empty string to clear body
+        payload["body"] = body
+    if state:
+        if state not in ["open", "closed"]:
+            raise HTTPException(
+                status_code=400,
+                detail="state must be 'open' or 'closed'"
+            )
+        payload["state"] = state
+    if base:
+        payload["base"] = base
+    
+    if not payload:
+        raise HTTPException(
+            status_code=400,
+            detail="At least one field (title, body, state, base) must be provided"
+        )
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            response = await client.patch(
+                f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}",
+                headers=headers,
+                json=payload
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                raise HTTPException(status_code=404, detail=f"PR #{pr_number} not found")
+            raise HTTPException(
+                status_code=e.response.status_code,
+                detail=f"GitHub API error: {e.response.text}"
+            )
+        except httpx.RequestError as e:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Failed to connect to GitHub: {str(e)}"
+            )
+        
+        # Fetch updated PR details
+        return await get_pull_request(pr_number, owner, repo)
+
+
+async def update_pr_assignees(
+    pr_number: int,
+    assignees: list[str] | None = None,
+    remove_assignees: list[str] | None = None,
+    owner: str | None = None,
+    repo: str | None = None
+) -> dict:
+    """
+    Add or remove assignees from a pull request.
+    
+    Args:
+        pr_number: PR number
+        assignees: List of GitHub usernames to add as assignees (optional)
+        remove_assignees: List of GitHub usernames to remove as assignees (optional)
+        owner: Repository owner (default: from env)
+        repo: Repository name (default: from env)
+    
+    Returns:
+        Updated assignees list
+    """
+    headers = _get_github_headers()
+    if not owner or not repo:
+        owner, repo = _get_default_repo()
+    
+    # Get current PR to find current assignees
+    current_pr = await get_pull_request(pr_number, owner, repo)
+    
+    # Get current assignees from the issue (PRs use issue endpoints for assignees)
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            issue_response = await client.get(
+                f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}",
+                headers=headers
+            )
+            issue_response.raise_for_status()
+            issue_data = issue_response.json()
+            current_assignees = [assignee["login"] for assignee in issue_data.get("assignees", [])]
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(
+                status_code=e.response.status_code,
+                detail=f"GitHub API error: {e.response.text}"
+            )
+    
+    # Build new assignees list
+    new_assignees = set(current_assignees)
+    
+    if assignees:
+        new_assignees.update(assignees)
+    
+    if remove_assignees:
+        new_assignees.difference_update(remove_assignees)
+    
+    # Update assignees
+    payload = {
+        "assignees": list(new_assignees)
+    }
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            response = await client.patch(
+                f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}",
+                headers=headers,
+                json=payload
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                raise HTTPException(status_code=404, detail=f"PR #{pr_number} not found")
+            raise HTTPException(
+                status_code=e.response.status_code,
+                detail=f"GitHub API error: {e.response.text}"
+            )
+        except httpx.RequestError as e:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Failed to connect to GitHub: {str(e)}"
+            )
+        
+        updated_issue = response.json()
+        return {
+            "pr_number": pr_number,
+            "assignees": [assignee["login"] for assignee in updated_issue.get("assignees", [])],
+            "added": assignees or [],
+            "removed": remove_assignees or []
+        }
+
+
+async def update_pr_labels(
+    pr_number: int,
+    labels: list[str] | None = None,
+    remove_labels: list[str] | None = None,
+    owner: str | None = None,
+    repo: str | None = None
+) -> dict:
+    """
+    Add or remove labels from a pull request.
+    
+    Args:
+        pr_number: PR number
+        labels: List of label names to add (optional)
+        remove_labels: List of label names to remove (optional)
+        owner: Repository owner (default: from env)
+        repo: Repository name (default: from env)
+    
+    Returns:
+        Updated labels list
+    """
+    headers = _get_github_headers()
+    if not owner or not repo:
+        owner, repo = _get_default_repo()
+    
+    # Get current labels
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            issue_response = await client.get(
+                f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}",
+                headers=headers
+            )
+            issue_response.raise_for_status()
+            issue_data = issue_response.json()
+            current_labels = [label["name"] for label in issue_data.get("labels", [])]
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(
+                status_code=e.response.status_code,
+                detail=f"GitHub API error: {e.response.text}"
+            )
+    
+    # Build new labels list
+    new_labels = set(current_labels)
+    
+    if labels:
+        new_labels.update(labels)
+    
+    if remove_labels:
+        new_labels.difference_update(remove_labels)
+    
+    # Update labels
+    payload = {
+        "labels": list(new_labels)
+    }
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            response = await client.patch(
+                f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}",
+                headers=headers,
+                json=payload
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                raise HTTPException(status_code=404, detail=f"PR #{pr_number} not found")
+            raise HTTPException(
+                status_code=e.response.status_code,
+                detail=f"GitHub API error: {e.response.text}"
+            )
+        except httpx.RequestError as e:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Failed to connect to GitHub: {str(e)}"
+            )
+        
+        updated_issue = response.json()
+        return {
+            "pr_number": pr_number,
+            "labels": [label["name"] for label in updated_issue.get("labels", [])],
+            "added": labels or [],
+            "removed": remove_labels or []
+        }
+
+
+async def request_pr_review(
+    pr_number: int,
+    reviewers: list[str] | None = None,
+    team_reviewers: list[str] | None = None,
+    owner: str | None = None,
+    repo: str | None = None
+) -> dict:
+    """
+    Request review from specific users or teams.
+    
+    Args:
+        pr_number: PR number
+        reviewers: List of GitHub usernames to request review from (optional)
+        team_reviewers: List of team slugs to request review from (optional)
+        owner: Repository owner (default: from env)
+        repo: Repository name (default: from env)
+    
+    Returns:
+        Review request result
+    """
+    headers = _get_github_headers()
+    if not owner or not repo:
+        owner, repo = _get_default_repo()
+    
+    if not reviewers and not team_reviewers:
+        raise HTTPException(
+            status_code=400,
+            detail="At least one reviewer or team_reviewer must be provided"
+        )
+    
+    payload = {}
+    if reviewers:
+        payload["reviewers"] = reviewers
+    if team_reviewers:
+        payload["team_reviewers"] = team_reviewers
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            response = await client.post(
+                f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}/requested_reviewers",
+                headers=headers,
+                json=payload
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                raise HTTPException(status_code=404, detail=f"PR #{pr_number} not found")
+            raise HTTPException(
+                status_code=e.response.status_code,
+                detail=f"GitHub API error: {e.response.text}"
+            )
+        except httpx.RequestError as e:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Failed to connect to GitHub: {str(e)}"
+            )
+        
+        result = response.json()
+        return {
+            "pr_number": pr_number,
+            "requested_reviewers": [r["login"] for r in result.get("requested_reviewers", [])],
+            "requested_teams": [t["slug"] for t in result.get("requested_teams", [])]
+        }
+

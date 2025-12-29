@@ -100,6 +100,78 @@ MCP_TOOLS = [
         ]
     },
     {
+        "name": "create_github_pr",
+        "description": "Create a new pull request. Requires title and head branch.",
+        "parameters": {
+            "title": "string (required)",
+            "body": "string (optional)",
+            "head": "string (required, branch name)",
+            "base": "string (optional, default: 'main')"
+        },
+        "examples": [
+            "create a PR from feature-branch",
+            "open a pull request for my changes"
+        ]
+    },
+    {
+        "name": "update_github_pr",
+        "description": "Update an existing PR (title, description, state, base branch). Extract PR number from text.",
+        "parameters": {
+            "pr_number": "integer (required)",
+            "title": "string (optional)",
+            "body": "string (optional)",
+            "state": "string (optional: 'open' or 'closed')",
+            "base": "string (optional)"
+        },
+        "examples": [
+            "update PR #42 description",
+            "change PR 10 title to 'New Title'",
+            "close PR #5"
+        ]
+    },
+    {
+        "name": "update_github_pr_assignees",
+        "description": "Add or remove assignees from a PR. Extract PR number and usernames from text.",
+        "parameters": {
+            "pr_number": "integer (required)",
+            "assignees": "list of strings (optional, GitHub usernames to add)",
+            "remove_assignees": "list of strings (optional, GitHub usernames to remove)"
+        },
+        "examples": [
+            "assign PR #42 to shashank",
+            "remove shashank from PR 10",
+            "assign PR #5 to shashank and sonia"
+        ]
+    },
+    {
+        "name": "update_github_pr_labels",
+        "description": "Add or remove labels from a PR. Extract PR number and label names from text.",
+        "parameters": {
+            "pr_number": "integer (required)",
+            "labels": "list of strings (optional, label names to add)",
+            "remove_labels": "list of strings (optional, label names to remove)"
+        },
+        "examples": [
+            "add label 'bug' to PR #42",
+            "remove 'documentation' label from PR 10",
+            "add labels 'urgent' and 'frontend' to PR #5"
+        ]
+    },
+    {
+        "name": "request_github_pr_review",
+        "description": "Request review from specific users or teams for a PR. Extract PR number and reviewer usernames from text.",
+        "parameters": {
+            "pr_number": "integer (required)",
+            "reviewers": "list of strings (optional, GitHub usernames)",
+            "team_reviewers": "list of strings (optional, team slugs)"
+        },
+        "examples": [
+            "request review from shashank for PR #42",
+            "ask sonia to review PR 10",
+            "request review from frontend-team for PR #5"
+        ]
+    },
+    {
         "name": "get_calendar_availability",
         "description": "Get calendar availability and free time slots for scheduling",
         "parameters": {
@@ -321,7 +393,9 @@ Response: {{"tools": [{{"name": "get_jira_issue", "params": {{"issue_key": "PROJ
                     else:
                         raise ValueError(f"Could not extract board_id from: {param_value}")
             
-            elif tool_name in ["get_github_pull", "get_github_pr_context"] and param_name == "pr_number":
+            elif tool_name in ["get_github_pull", "get_github_pr_context", "update_github_pr",
+                               "update_github_pr_assignees", "update_github_pr_labels",
+                               "request_github_pr_review"] and param_name == "pr_number":
                 try:
                     validated["pr_number"] = int(param_value)
                 except (ValueError, TypeError):
@@ -577,7 +651,8 @@ Do not include any markdown, code blocks, or text outside the JSON object."""
             get_boards, get_board_issues, get_jira_issues, get_single_issue
         )
         from app.tools.github import (
-            get_pull_requests, get_pull_request, get_pr_context
+            get_pull_requests, get_pull_request, get_pr_context,
+            update_pull_request, update_pr_assignees, update_pr_labels, request_pr_review
         )
         from app.tools.calendar import (
             get_availability, get_today_events, get_this_week_availability
@@ -595,7 +670,9 @@ Do not include any markdown, code blocks, or text outside the JSON object."""
                     raise ValueError("board_id is required for get_jira_board_issues")
                 if tool_name == "get_jira_issue" and not params.get("issue_key"):
                     raise ValueError("issue_key is required for get_jira_issue")
-                if tool_name in ["get_github_pull", "get_github_pr_context"] and not params.get("pr_number"):
+                if tool_name in ["get_github_pull", "get_github_pr_context", "update_github_pr", 
+                                 "update_github_pr_assignees", "update_github_pr_labels", 
+                                 "request_github_pr_review"] and not params.get("pr_number"):
                     raise ValueError("pr_number is required for this tool")
                 
                 # Execute tool
@@ -614,6 +691,40 @@ Do not include any markdown, code blocks, or text outside the JSON object."""
                     result = await get_pull_request(params.get("pr_number"))
                 elif tool_name == "get_github_pr_context":
                     result = await get_pr_context(params.get("pr_number"))
+                elif tool_name == "create_github_pr":
+                    from app.tools.github import create_pull_request
+                    result = await create_pull_request(
+                        title=params.get("title"),
+                        body=params.get("body"),
+                        head=params.get("head"),
+                        base=params.get("base", "main")
+                    )
+                elif tool_name == "update_github_pr":
+                    result = await update_pull_request(
+                        pr_number=params.get("pr_number"),
+                        title=params.get("title"),
+                        body=params.get("body"),
+                        state=params.get("state"),
+                        base=params.get("base")
+                    )
+                elif tool_name == "update_github_pr_assignees":
+                    result = await update_pr_assignees(
+                        pr_number=params.get("pr_number"),
+                        assignees=params.get("assignees"),
+                        remove_assignees=params.get("remove_assignees")
+                    )
+                elif tool_name == "update_github_pr_labels":
+                    result = await update_pr_labels(
+                        pr_number=params.get("pr_number"),
+                        labels=params.get("labels"),
+                        remove_labels=params.get("remove_labels")
+                    )
+                elif tool_name == "request_github_pr_review":
+                    result = await request_pr_review(
+                        pr_number=params.get("pr_number"),
+                        reviewers=params.get("reviewers"),
+                        team_reviewers=params.get("team_reviewers")
+                    )
                 elif tool_name == "get_calendar_availability":
                     # Convert date strings to ISO format
                     start_date = params.get("start_date")
