@@ -102,19 +102,14 @@ class AgnoAgent:
             Formatted response string
         """
         try:
-            # Agno's run method is synchronous, but we're in async context
-            import asyncio
-            
-            # Run Agno agent in executor to avoid blocking
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: self.agent.run(message)
-            )
+            # Use async version of agent.run() since our tools are async
+            response = await self.agent.arun(message)
             
             # Extract response text
             if hasattr(response, 'content'):
                 return response.content
+            elif hasattr(response, 'text'):
+                return response.text
             elif isinstance(response, str):
                 return response
             else:
