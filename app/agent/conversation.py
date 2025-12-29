@@ -580,11 +580,22 @@ Do not include any markdown, code blocks, or text outside the JSON object."""
                     if len(data) == 0:
                         results_detail.append(f"{result['tool']}: No items found")
                     else:
-                        # Include sample data for better formatting
-                        sample = data[0] if data else {}
-                        results_detail.append(f"{result['tool']}: Found {len(data)} items. Sample: {json.dumps(sample, default=str)[:200]}")
+                        # Include ALL items, but limit total size to avoid token limits
+                        # For small lists (< 20 items), include all
+                        # For larger lists, include first 20 and mention total count
+                        items_to_include = data[:20] if len(data) > 20 else data
+                        items_json = json.dumps(items_to_include, default=str, indent=2)
+                        
+                        if len(data) > 20:
+                            results_detail.append(
+                                f"{result['tool']}: Found {len(data)} items (showing first 20):\n{items_json}"
+                            )
+                        else:
+                            results_detail.append(
+                                f"{result['tool']}: Found {len(data)} items:\n{items_json}"
+                            )
                 elif isinstance(data, dict):
-                    results_detail.append(f"{result['tool']}: {json.dumps(data, default=str)[:500]}")
+                    results_detail.append(f"{result['tool']}: {json.dumps(data, default=str, indent=2)}")
                 else:
                     results_detail.append(f"{result['tool']}: {str(data)[:200]}")
             else:
@@ -598,11 +609,14 @@ Tool Results:
 {chr(10).join(results_detail)}
 
 Format this data into a clear, helpful response for the user. 
+CRITICAL: If there are multiple items in a list, you MUST show details for ALL items, not just the first one.
 - If there are results, present them in a readable, organized format
+- For lists with multiple items, show ALL items with their details (summary, time, etc.)
 - If there are errors, explain them clearly and suggest what might be wrong
 - If no results were found, explain why (e.g., "No open PRs found" or "Board ID not found")
 - Be concise but informative
-- Use bullet points or lists when showing multiple items"""
+- Use bullet points or lists when showing multiple items
+- Include all relevant details for each item (time, summary, status, etc.)"""
         
         try:
             response = self.client.models.generate_content(
@@ -628,10 +642,19 @@ Format this data into a clear, helpful response for the user.
                         lines.append("No results found.")
                     else:
                         lines.append(f"Found {len(data)} items:")
-                        for item in data[:10]:  # Show first 10
+                        # Show ALL items, not just first 10
+                        for item in data:
                             if isinstance(item, dict):
-                                summary = item.get('summary') or item.get('title') or item.get('name') or str(item)[:50]
-                                lines.append(f"  • {summary}")
+                                summary = item.get('summary') or item.get('title') or item.get('name', 'Untitled')
+                                # Include time if available (for calendar events)
+                                start = item.get('start') or item.get('start_time', '')
+                                end = item.get('end') or item.get('end_time', '')
+                                if start:
+                                    lines.append(f"  • {summary}")
+                                    if start and end:
+                                        lines.append(f"    Time: {start} - {end}")
+                                else:
+                                    lines.append(f"  • {summary}")
                 elif isinstance(data, dict):
                     summary = data.get('summary') or data.get('name') or str(data)[:100]
                     lines.append(f"Result: {summary}")
