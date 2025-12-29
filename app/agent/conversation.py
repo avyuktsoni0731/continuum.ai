@@ -30,110 +30,7 @@ logger = logging.getLogger(__name__)
 # Tool schemas for the LLM to understand available tools
 # NOTE: Jira tools are now handled by Agno agent - removed from here
 MCP_TOOLS = [
-    {
-        "name": "get_github_pulls",
-        "description": "List pull requests. Use state='open' (default), 'closed', or 'all'",
-        "parameters": {"state": "string (optional: 'open', 'closed', 'all')"},
-        "examples": [
-            "show me open PRs",
-            "list all pull requests",
-            "get closed PRs"
-        ]
-    },
-    {
-        "name": "get_github_pull",
-        "description": "Get details of a specific PR by number. Extract PR number from phrases like 'PR #42', 'pull request 10', etc.",
-        "parameters": {"pr_number": "integer (required)"},
-        "examples": [
-            "show me PR #42",
-            "get details of pull request 10",
-            "what's the status of PR 5"
-        ]
-    },
-    {
-        "name": "get_github_pr_context",
-        "description": "Get comprehensive PR context including CI status, reviews, and approvals. Extract PR number from text.",
-        "parameters": {"pr_number": "integer (required)"},
-        "examples": [
-            "check PR #42",
-            "get full context for PR 10",
-            "show me reviews and CI status for PR 5"
-        ]
-    },
-    {
-        "name": "create_github_pr",
-        "description": "Create a new pull request. Requires title and head branch.",
-        "parameters": {
-            "title": "string (required)",
-            "body": "string (optional)",
-            "head": "string (required, branch name)",
-            "base": "string (optional, default: 'main')"
-        },
-        "examples": [
-            "create a PR from feature-branch",
-            "open a pull request for my changes"
-        ]
-    },
-    {
-        "name": "update_github_pr",
-        "description": "Update an existing PR (title, description/body, state, base branch). Extract PR number from text. Use 'description' parameter for PR body/description.",
-        "parameters": {
-            "pr_number": "integer (required)",
-            "title": "string (optional)",
-            "body": "string (optional, PR description/body)",
-            "description": "string (optional, alias for body - use this for PR description)",
-            "state": "string (optional: 'open' or 'closed')",
-            "base": "string (optional)"
-        },
-        "examples": [
-            "update PR #42 description to 'New description'",
-            "change PR 10 title to 'New Title'",
-            "add description 'Fixed bug' to PR #5",
-            "close PR #5"
-        ]
-    },
-    {
-        "name": "update_github_pr_assignees",
-        "description": "Add or remove assignees from a PR. Extract PR number and usernames from text.",
-        "parameters": {
-            "pr_number": "integer (required)",
-            "assignees": "list of strings (optional, GitHub usernames to add)",
-            "remove_assignees": "list of strings (optional, GitHub usernames to remove)"
-        },
-        "examples": [
-            "assign PR #42 to shashank",
-            "remove shashank from PR 10",
-            "assign PR #5 to shashank and sonia"
-        ]
-    },
-    {
-        "name": "update_github_pr_labels",
-        "description": "Add or remove labels from a PR. Extract PR number and label names from text.",
-        "parameters": {
-            "pr_number": "integer (required)",
-            "labels": "list of strings (optional, label names to add)",
-            "remove_labels": "list of strings (optional, label names to remove)"
-        },
-        "examples": [
-            "add label 'bug' to PR #42",
-            "remove 'documentation' label from PR 10",
-            "add labels 'urgent' and 'frontend' to PR #5"
-        ]
-    },
-    {
-        "name": "request_github_pr_review",
-        "description": "Request review from specific users or teams for a PR. Extract PR number and reviewer usernames from text.",
-        "parameters": {
-            "pr_number": "integer (required)",
-            "reviewers": "list of strings (optional, GitHub usernames)",
-            "team_reviewers": "list of strings (optional, team slugs)"
-        },
-        "examples": [
-            "request review from shashank for PR #42",
-            "ask sonia to review PR 10",
-            "request review from frontend-team for PR #5"
-        ]
-    },
+    # NOTE: GitHub tools are now handled by Agno agent - removed from here
     {
         "name": "get_calendar_availability",
         "description": "Get calendar availability and free time slots for scheduling",
@@ -220,32 +117,29 @@ Available Tools:
 {chr(10).join(tools_desc)}
 
 CRITICAL INSTRUCTIONS:
-1. Extract ALL parameters from the user message (board IDs, PR numbers, issue keys, etc.)
-2. Convert parameters to correct types (integers for IDs, strings for keys)
+1. Extract ALL parameters from the user message (dates, calendar IDs, etc.)
+2. Convert parameters to correct types (strings for dates, calendar IDs)
 3. If a required parameter is missing, use the most reasonable default or return an error
 4. Return ONLY valid JSON, no markdown, no explanations
 
 Response Format (MUST be valid JSON):
 {{
     "tools": [
-        {{"name": "tool_name", "params": {{"param1": "value1", "param2": 123}}}}
+        {{"name": "tool_name", "params": {{"param1": "value1", "param2": "value2"}}}}
     ],
     "reasoning": "Brief explanation of why these tools were chosen"
 }}
 
 Examples of correct responses:
 
-User: "show me open PRs"
-Response: {{"tools": [{{"name": "get_github_pulls", "params": {{"state": "open"}}}}], "reasoning": "User wants to see open pull requests"}}
+User: "show me my availability"
+Response: {{"tools": [{{"name": "get_calendar_availability", "params": {{}}}}], "reasoning": "User wants to see calendar availability"}}
 
-User: "get issues from board 5"
-Response: {{"tools": [{{"name": "get_jira_board_issues", "params": {{"board_id": 5}}}}], "reasoning": "User wants issues from board ID 5"}}
+User: "what's on my calendar today"
+Response: {{"tools": [{{"name": "get_today_events", "params": {{}}}}], "reasoning": "User wants today's calendar events"}}
 
-User: "show me PR #42"
-Response: {{"tools": [{{"name": "get_github_pr_context", "params": {{"pr_number": 42}}}}], "reasoning": "User wants details of PR number 42"}}
-
-User: "what's the status of PROJ-123"
-Response: {{"tools": [{{"name": "get_jira_issue", "params": {{"issue_key": "PROJ-123"}}}}], "reasoning": "User wants details of Jira issue PROJ-123"}}
+User: "when am I free this week"
+Response: {{"tools": [{{"name": "get_this_week_availability", "params": {{}}}}], "reasoning": "User wants this week's availability"}}
 """
     
     def _normalize_date(self, date_str: str) -> Optional[str]:
@@ -343,21 +237,8 @@ Response: {{"tools": [{{"name": "get_jira_issue", "params": {{"issue_key": "PROJ
             if param_value is None:
                 continue
             
-            # Type conversion based on tool requirements
-            if tool_name in ["get_github_pull", "get_github_pr_context", "update_github_pr",
-                               "update_github_pr_assignees", "update_github_pr_labels",
-                               "request_github_pr_review"] and param_name == "pr_number":
-                try:
-                    validated["pr_number"] = int(param_value)
-                except (ValueError, TypeError):
-                    logger.warning(f"Invalid pr_number: {param_value}, trying to extract number")
-                    # Try to extract number from string (handles "PR #42", "42", etc.)
-                    match = re.search(r'(\d+)', str(param_value))
-                    if match:
-                        validated["pr_number"] = int(match.group(1))
-                    else:
-                        raise ValueError(f"Could not extract pr_number from: {param_value}")
-            
+            # NOTE: GitHub parameter validation removed - handled by Agno agent
+            # Type conversion for remaining tools (Calendar, etc.)
             else:
                 # Keep as-is for other parameters
                 validated[param_name] = param_value
@@ -380,11 +261,11 @@ Response: {{"tools": [{{"name": "get_jira_issue", "params": {{"issue_key": "PROJ
 
 User message: "{user_message}"
 
-Analyze the user's request and determine which MCP tool(s) to call.
-Extract ALL parameters from the message (board IDs, PR numbers, issue keys, etc.).
-Be precise with parameter extraction - look for numbers, issue keys (PROJ-123 format), etc.
+Analyze the user's request and determine which Calendar tool(s) to call.
+Extract ALL parameters from the message (dates, calendar IDs, etc.).
+Be precise with parameter extraction - look for dates, time ranges, etc.
 
-NOTE: Jira-related requests are handled by a separate agent. Focus on GitHub and Calendar tools.
+NOTE: Jira and GitHub requests are handled by Agno agent. This agent only handles Calendar tools.
 
 Return ONLY valid JSON, no markdown code blocks, no explanations outside JSON."""
         
@@ -523,18 +404,7 @@ Do not include any markdown, code blocks, or text outside the JSON object."""
                     "reasoning": "User wants to see Jira boards (fallback parsing)"
                 }
         
-        if "pr" in message_lower or "pull request" in message_lower:
-            pr_match = re.search(r'#?(\d+)', message)
-            if pr_match:
-                pr_number = int(pr_match.group(1))
-                return {
-                    "tools": [{"name": "get_github_pr_context", "params": {"pr_number": pr_number}}],
-                    "reasoning": f"User wants PR {pr_number} details (fallback parsing)"
-                }
-            return {
-                "tools": [{"name": "get_github_pulls", "params": {"state": "open"}}],
-                "reasoning": "User wants to see open PRs (fallback parsing)"
-            }
+        # NOTE: Jira and GitHub requests are now handled by Agno agent - skip fallback parsing
         
         if "calendar" in message_lower or "availability" in message_lower or "free" in message_lower:
             if "today" in message_lower:
@@ -547,14 +417,7 @@ Do not include any markdown, code blocks, or text outside the JSON object."""
                 "reasoning": "User wants calendar availability (fallback parsing)"
             }
         
-        # Try to match Jira issue key
-        issue_match = re.search(r'([A-Z]+-\d+)', message, re.IGNORECASE)
-        if issue_match:
-            issue_key = issue_match.group(1).upper()
-            return {
-                "tools": [{"name": "get_jira_issue", "params": {"issue_key": issue_key}}],
-                "reasoning": f"User wants Jira issue {issue_key} (fallback parsing)"
-            }
+        # NOTE: Jira and GitHub fallback parsing removed - handled by Agno agent
         
         return {
             "tools": [],
@@ -574,11 +437,7 @@ Do not include any markdown, code blocks, or text outside the JSON object."""
         results = []
         
         # Import underlying tool functions directly
-        # NOTE: Jira tools are now handled by Agno agent
-        from app.tools.github import (
-            get_pull_requests, get_pull_request, get_pr_context,
-            update_pull_request, update_pr_assignees, update_pr_labels, request_pr_review
-        )
+        # NOTE: Jira and GitHub tools are now handled by Agno agent
         from app.tools.calendar import (
             get_availability, get_today_events, get_this_week_availability
         )
@@ -591,56 +450,10 @@ Do not include any markdown, code blocks, or text outside the JSON object."""
             
             try:
                 # Validate required parameters
-                # NOTE: Jira tools are now handled by Agno agent
-                if tool_name in ["get_github_pull", "get_github_pr_context", "update_github_pr", 
-                                 "update_github_pr_assignees", "update_github_pr_labels", 
-                                 "request_github_pr_review"] and not params.get("pr_number"):
-                    raise ValueError("pr_number is required for this tool")
-                
+                # NOTE: Jira and GitHub tools are now handled by Agno agent
                 # Execute tool
-                # NOTE: Jira tools removed - handled by Agno
-                if tool_name == "get_github_pulls":
-                    result = await get_pull_requests(state=params.get("state", "open"))
-                elif tool_name == "get_github_pull":
-                    result = await get_pull_request(params.get("pr_number"))
-                elif tool_name == "get_github_pr_context":
-                    result = await get_pr_context(params.get("pr_number"))
-                elif tool_name == "create_github_pr":
-                    from app.tools.github import create_pull_request
-                    result = await create_pull_request(
-                        title=params.get("title"),
-                        body=params.get("body"),
-                        head=params.get("head"),
-                        base=params.get("base", "main")
-                    )
-                elif tool_name == "update_github_pr":
-                    result = await update_pull_request(
-                        pr_number=params.get("pr_number"),
-                        title=params.get("title"),
-                        body=params.get("body"),
-                        description=params.get("description"),  # Support description alias
-                        state=params.get("state"),
-                        base=params.get("base")
-                    )
-                elif tool_name == "update_github_pr_assignees":
-                    result = await update_pr_assignees(
-                        pr_number=params.get("pr_number"),
-                        assignees=params.get("assignees"),
-                        remove_assignees=params.get("remove_assignees")
-                    )
-                elif tool_name == "update_github_pr_labels":
-                    result = await update_pr_labels(
-                        pr_number=params.get("pr_number"),
-                        labels=params.get("labels"),
-                        remove_labels=params.get("remove_labels")
-                    )
-                elif tool_name == "request_github_pr_review":
-                    result = await request_pr_review(
-                        pr_number=params.get("pr_number"),
-                        reviewers=params.get("reviewers"),
-                        team_reviewers=params.get("team_reviewers")
-                    )
-                elif tool_name == "get_calendar_availability":
+                # NOTE: Jira and GitHub tools removed - handled by Agno
+                if tool_name == "get_calendar_availability":
                     # Convert date strings to ISO format
                     start_date = params.get("start_date")
                     end_date = params.get("end_date")
