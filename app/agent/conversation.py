@@ -665,6 +665,252 @@ Do not include any markdown, code blocks, or text outside the JSON object."""
         
         return results
     
+    async def _execute_workflow(self, workflow_type: str, workflow_params: dict) -> dict:
+        """
+        Execute a multi-step workflow.
+        
+        Args:
+            workflow_type: Type of workflow ("reassign_issue", "create_issue", etc.)
+            workflow_params: Parameters for the workflow
+        
+        Returns:
+            WorkflowResult as dict
+        """
+        try:
+            from app.workflows.orchestrator import execute_workflow
+            from app.workflows.models import WorkflowStep, WorkflowType
+            
+            # Convert workflow_type string to enum
+            workflow_enum = WorkflowType(workflow_type)
+            
+            # Build workflow steps based on type
+            steps = []
+            
+            if workflow_type == "reassign_issue":
+                # Workflow: Reassign issue and update due date
+                # Step 1: Get current issue (to preserve other fields)
+                issue_key = workflow_params.get("issue_key")
+                if not issue_key:
+                    raise ValueError("issue_key is required for reassign_issue workflow")
+                
+                steps.append(WorkflowStep(
+                    step_number=1,
+                    tool_name="get_jira_issue",
+                    params={"issue_key": issue_key},
+                    description="Get current issue details"
+                ))
+                
+                # Step 2: Update assignee (if provided)
+                if workflow_params.get("assignee"):
+                    steps.append(WorkflowStep(
+                        step_number=2,
+                        tool_name="update_jira_issue",
+                        params={
+                            "issue_key": issue_key,
+                            "assignee": workflow_params["assignee"]
+                        },
+                        depends_on=[1],
+                        description=f"Reassign to {workflow_params['assignee']}"
+                    ))
+                
+                # Step 3: Update due_time (if provided)
+                # Handle both "due_date" and "due_time" params
+                due_time_str = workflow_params.get("due_time") or workflow_params.get("due_date")
+                if due_time_str:
+                    # Normalize date - handle "January 5th, 2026 by 2:30 PM" format
+                    due_time = self._normalize_date(due_time_str)
+                    # Convert to ISO datetime format if needed
+                    if due_time and 'T' not in due_time:
+                        # If only date, try to extract time from original string
+                        time_match = re.search(r'(\d{1,2}):(\d{2})\s*(AM|PM)', due_time_str, re.IGNORECASE)
+                        if time_match:
+                            hour = int(time_match.group(1))
+                            minute = int(time_match.group(2))
+                            am_pm = time_match.group(3).upper()
+                            if am_pm == "PM" and hour != 12:
+                                hour += 12
+                            elif am_pm == "AM" and hour == 12:
+                                hour = 0
+                            due_time = due_time.replace('T00:00:00Z', f'T{hour:02d}:{minute:02d}:00Z')
+                        else:
+                            # Default to 17:00:00 if no time specified
+                            due_time = due_time.replace('T00:00:00Z', 'T17:00:00Z')
+                    
+                    step_num = 3 if workflow_params.get("assignee") else 2
+                    steps.append(WorkflowStep(
+                        step_number=step_num,
+                        tool_name="update_jira_issue",
+                        params={
+                            "issue_key": issue_key,
+                            "due_time": due_time
+                        },
+                        depends_on=[step_num - 1],
+                        description=f"Update due time to {due_time}"
+                    ))
+            
+            elif workflow_type == "create_issue":
+                # Workflow: Create issue with assignee and due_time
+                project_key = workflow_params.get("project_key", "KAN")  # Default project
+                summary = workflow_params.get("summary")
+                if not summary:
+                    raise ValueError("summary is required for create_issue workflow")
+                
+                # Step 1: Create issue (with assignee and due_time if provided)
+                create_params = {
+                    "project_key": project_key,
+                    "summary": summary,
+                    "issue_type": workflow_params.get("issue_type", "Task"),
+                    "description": workflow_params.get("description"),
+                    "priority": workflow_params.get("priority")
+                }
+                
+                # Normalize due_time if provided
+                due_time_str = workflow_params.get("due_time") or workflow_params.get("due_date")
+                if due_time_str:
+                    due_time = self._normalize_date(due_time_str)
+                    if due_time and 'T' not in due_time:
+                        # Extract time if present
+                        time_match = re.search(r'(\d{1,2}):(\d{2})\s*(AM|PM)', due_time_str, re.IGNORECASE)
+                        if time_match:
+                            hour = int(time_match.group(1))
+                            minute = int(time_match.group(2))
+                            am_pm = time_match.group(3).upper()
+                            if am_pm == "PM" and hour != 12:
+                                hour += 12
+                            elif am_pm == "AM" and hour == 12:
+                                hour = 0
+                            due_time = due_time.replace('T00:00:00Z', f'T{hour:02d}:{minute:02d}:00Z')
+                        else:
+                            due_time = due_time.replace('T00:00:00Z', 'T17:00:00Z')
+                    create_params["due_time"] = due_time
+                
+                if workflow_params.get("assignee"):
+                    create_params["assignee"] = workflow_params["assignee"]
+                
+                steps.append(WorkflowStep(
+                    step_number=1,
+                    tool_name="create_jira_issue",
+                    params=create_params,
+                    description="Create Jira issue"
+                ))
+                
+                # Step 2: Check calendar availability (if due_time provided)
+                if due_time_str and workflow_params.get("assignee"):
+                    # Find user's calendar ID from assignee email
+                    assignee_email = workflow_params.get("assignee_email")  # Could be passed separately
+                    calendar_id = assignee_email or workflow_params.get("calendar_id", "primary")
+                    
+                    due_time_normalized = self._normalize_date(due_time_str)
+                    # Get availability around the due time
+                    steps.append(WorkflowStep(
+                        step_number=2,
+                        tool_name="check_calendar_availability",
+                        params={
+                            "calendar_id": calendar_id,
+                            "start_date": due_time_normalized,
+                            "end_date": due_time_normalized
+                        },
+                        depends_on=[1],
+                        description="Check assignee calendar availability"
+                    ))
+            
+            elif workflow_type == "create_issue_with_pr":
+                # Workflow: Create issue, check calendar, optionally create PR
+                # Similar to create_issue, but also creates PR if requested
+                project_key = workflow_params.get("project_key", "KAN")
+                summary = workflow_params.get("summary")
+                if not summary:
+                    raise ValueError("summary is required")
+                
+                # Step 1: Create issue
+                create_params = {
+                    "project_key": project_key,
+                    "summary": summary,
+                    "issue_type": workflow_params.get("issue_type", "Task"),
+                    "description": workflow_params.get("description"),
+                    "priority": workflow_params.get("priority")
+                }
+                
+                due_time_str = workflow_params.get("due_time") or workflow_params.get("due_date")
+                if due_time_str:
+                    due_time = self._normalize_date(due_time_str)
+                    if due_time and 'T' not in due_time:
+                        time_match = re.search(r'(\d{1,2}):(\d{2})\s*(AM|PM)', due_time_str, re.IGNORECASE)
+                        if time_match:
+                            hour = int(time_match.group(1))
+                            minute = int(time_match.group(2))
+                            am_pm = time_match.group(3).upper()
+                            if am_pm == "PM" and hour != 12:
+                                hour += 12
+                            elif am_pm == "AM" and hour == 12:
+                                hour = 0
+                            due_time = due_time.replace('T00:00:00Z', f'T{hour:02d}:{minute:02d}:00Z')
+                        else:
+                            due_time = due_time.replace('T00:00:00Z', 'T17:00:00Z')
+                    create_params["due_time"] = due_time
+                
+                if workflow_params.get("assignee"):
+                    create_params["assignee"] = workflow_params["assignee"]
+                
+                steps.append(WorkflowStep(
+                    step_number=1,
+                    tool_name="create_jira_issue",
+                    params=create_params,
+                    description="Create Jira issue"
+                ))
+                
+                # Step 2: Check calendar
+                if due_time_str:
+                    calendar_id = workflow_params.get("calendar_id", "primary")
+                    due_time_normalized = self._normalize_date(due_time_str)
+                    steps.append(WorkflowStep(
+                        step_number=2,
+                        tool_name="check_calendar_availability",
+                        params={
+                            "calendar_id": calendar_id,
+                            "start_date": due_time_normalized,
+                            "end_date": due_time_normalized
+                        },
+                        depends_on=[1],
+                        description="Check calendar availability"
+                    ))
+                
+                # Step 3: Create PR (if requested)
+                if workflow_params.get("create_pr"):
+                    pr_params = {
+                        "title": workflow_params.get("pr_title", summary),
+                        "body": workflow_params.get("pr_body", f"Related to Jira issue: $step_1.data.key"),
+                        "head": workflow_params.get("pr_head_branch"),
+                        "base": workflow_params.get("pr_base_branch", "main")
+                    }
+                    step_num = 3 if due_time_str else 2
+                    steps.append(WorkflowStep(
+                        step_number=step_num,
+                        tool_name="create_github_pr",
+                        params=pr_params,
+                        depends_on=[step_num - 1],
+                        description="Create GitHub PR"
+                    ))
+            
+            else:
+                raise ValueError(f"Unknown workflow type: {workflow_type}")
+            
+            # Execute workflow
+            result = await execute_workflow(steps)
+            result.workflow_type = workflow_enum
+            
+            return result.model_dump() if hasattr(result, 'model_dump') else result
+            
+        except Exception as e:
+            logger.error(f"Workflow execution failed: {e}", exc_info=True)
+            from app.workflows.models import WorkflowResult, WorkflowType
+            return WorkflowResult(
+                workflow_type=WorkflowType.REASSIGN_ISSUE,
+                success=False,
+                steps_executed=[],
+                error=str(e)
+            ).model_dump()
+    
     async def _check_user_availability(self) -> bool:
         """Check if user is currently available based on calendar."""
         try:
