@@ -52,6 +52,35 @@ agent: Optional[ConversationalAgent] = None
 # Event deduplication: track processed events
 processed_events = set()
 
+# Start trigger system scheduler on startup
+@app.on_event("startup")
+async def startup_event():
+    """Start background services on app startup."""
+    try:
+        import asyncio
+        from app.triggers.scheduler import start_scheduler
+        
+        # Start scheduler in background task
+        async def _run_scheduler():
+            await asyncio.sleep(1)  # Small delay to ensure app is fully started
+            start_scheduler()
+        
+        asyncio.create_task(_run_scheduler())
+        logger.info("Trigger system scheduler starting...")
+    except Exception as e:
+        logger.warning(f"Could not start trigger scheduler: {e}")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Stop background services on app shutdown."""
+    try:
+        from app.triggers.scheduler import stop_scheduler
+        stop_scheduler()
+        logger.info("Trigger system scheduler stopped")
+    except Exception as e:
+        logger.warning(f"Error stopping trigger scheduler: {e}")
+
 
 def get_agent() -> ConversationalAgent:
     """Get or initialize the conversational agent."""
@@ -278,6 +307,44 @@ async def test_slack():
         return {"status": "success", "message": "Test message sent"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+@app.post("/webhooks/github")
+async def github_webhook(request: Request):
+    """Handle GitHub webhook events."""
+    try:
+        from app.triggers.webhooks import handle_github_webhook
+        
+        payload = await request.json()
+        success = await handle_github_webhook(payload)
+        
+        if success:
+            return JSONResponse(content={"status": "ok"})
+        else:
+            return JSONResponse(content={"status": "ignored"}, status_code=200)
+            
+    except Exception as e:
+        logger.error(f"GitHub webhook error: {e}", exc_info=True)
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
+@app.post("/webhooks/jira")
+async def jira_webhook(request: Request):
+    """Handle Jira webhook events."""
+    try:
+        from app.triggers.webhooks import handle_jira_webhook
+        
+        payload = await request.json()
+        success = await handle_jira_webhook(payload)
+        
+        if success:
+            return JSONResponse(content={"status": "ok"})
+        else:
+            return JSONResponse(content={"status": "ignored"}, status_code=200)
+            
+    except Exception as e:
+        logger.error(f"Jira webhook error: {e}", exc_info=True)
+        return JSONResponse(content={"error": str(e)}, status_code=500)
 
 
 if __name__ == "__main__":
