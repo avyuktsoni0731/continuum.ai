@@ -507,6 +507,7 @@ async def update_pull_request(
     pr_number: int,
     title: str | None = None,
     body: str | None = None,
+    description: str | None = None,  # Alias for body (user-friendly)
     state: str | None = None,
     base: str | None = None,
     owner: str | None = None,
@@ -519,6 +520,7 @@ async def update_pull_request(
         pr_number: PR number
         title: New title (optional)
         body: New description/body (optional)
+        description: Alias for body - same as body parameter (optional)
         state: New state - "open" or "closed" (optional)
         base: New base branch (optional)
         owner: Repository owner (default: from env)
@@ -535,8 +537,13 @@ async def update_pull_request(
     
     if title:
         payload["title"] = title
+    
+    # Handle both 'body' and 'description' parameters (description is user-friendly alias)
     if body is not None:  # Allow empty string to clear body
         payload["body"] = body
+    elif description is not None:  # If description provided but body not, use description
+        payload["body"] = description
+    
     if state:
         if state not in ["open", "closed"]:
             raise HTTPException(
@@ -550,7 +557,7 @@ async def update_pull_request(
     if not payload:
         raise HTTPException(
             status_code=400,
-            detail="At least one field (title, body, state, base) must be provided"
+            detail="At least one field (title, body/description, state, base) must be provided"
         )
     
     async with httpx.AsyncClient(timeout=30.0) as client:
