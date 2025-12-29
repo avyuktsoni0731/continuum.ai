@@ -5,17 +5,37 @@ Exposes Jira and GitHub tools via Model Context Protocol (MCP).
 """
 
 import sys
+import os
 from pathlib import Path
 
 # Add project root to path so 'app' module can be found
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
+# Handle both direct execution and module execution
+try:
+    # Try to get project root from this file's location
+    if __file__:
+        project_root = Path(__file__).resolve().parent.parent
+    else:
+        # Fallback: assume we're in the project root
+        project_root = Path.cwd()
+except:
+    # Ultimate fallback
+    project_root = Path.cwd()
+
+# Ensure project root is in path
+project_root_str = str(project_root.resolve())
+if project_root_str not in sys.path:
+    sys.path.insert(0, project_root_str)
 
 from fastmcp import FastMCP
 from dotenv import load_dotenv
 
 # Load environment variables
-load_dotenv(project_root / ".env")
+env_path = project_root / ".env"
+if env_path.exists():
+    load_dotenv(env_path)
+else:
+    # Try loading from current directory as fallback
+    load_dotenv()
 
 # Create MCP server
 mcp = FastMCP(
@@ -384,5 +404,41 @@ async def get_this_week_availability(
 # =============================================================================
 
 if __name__ == "__main__":
-    mcp.run()
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Run continuum.ai MCP server")
+    parser.add_argument(
+        "--transport",
+        choices=["stdio", "http"],
+        default="stdio",
+        help="Transport type: stdio (local) or http (network)"
+    )
+    parser.add_argument(
+        "--host",
+        default="0.0.0.0",
+        help="Host to bind to (for HTTP transport, default: 0.0.0.0)"
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Port to bind to (for HTTP transport, default: 8000)"
+    )
+    
+    args = parser.parse_args()
+    
+    if args.transport == "http":
+        # Ensure we're in the project root directory
+        os.chdir(project_root)
+        
+        print(f"🚀 Starting continuum.ai MCP Server (HTTP)")
+        print(f"   Host: {args.host}")
+        print(f"   Port: {args.port}")
+        print(f"   Working Directory: {os.getcwd()}")
+        print(f"   Access at: http://{args.host if args.host != '0.0.0.0' else 'localhost'}:{args.port}/mcp/")
+        print()
+        mcp.run(transport="http", host=args.host, port=args.port)
+    else:
+        # STDIO transport (for local MCP clients)
+        mcp.run()
 
