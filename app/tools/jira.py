@@ -339,3 +339,290 @@ async def get_board_issues(board_id: int) -> list[JiraIssueDetail]:
             )
             for issue in issues
         ]
+
+
+async def find_user_by_name(name: str) -> dict | None:
+    """
+    Find Jira user by display name or email.
+    
+    Args:
+        name: User's display name or email
+    
+    Returns:
+        User dict with accountId, displayName, emailAddress, or None if not found
+    """
+    auth = _get_jira_auth()
+    base_url = _get_jira_base_url()
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            # Search for users
+            response = await client.get(
+                f"{base_url}/rest/api/3/user/search",
+                auth=auth,
+                params={"query": name, "maxResults": 10}
+            )
+            response.raise_for_status()
+            users = response.json()
+            
+            # Try to find exact match by display name or email
+            name_lower = name.lower()
+            for user in users:
+                display_name = (user.get("displayName") or "").lower()
+                email = (user.get("emailAddress") or "").lower()
+                if name_lower in display_name or name_lower in email:
+                    return {
+                        "accountId": user.get("accountId"),
+                        "displayName": user.get("displayName"),
+                        "emailAddress": user.get("emailAddress")
+                    }
+            
+            # Return first result if no exact match
+            if users:
+                return {
+                    "accountId": users[0].get("accountId"),
+                    "displayName": users[0].get("displayName"),
+                    "emailAddress": users[0].get("emailAddress")
+                }
+            
+            return None
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(
+                status_code=e.response.status_code,
+                detail=f"Jira API error: {e.response.text}"
+            )
+
+
+async def create_issue(
+    project_key: str,
+    summary: str,
+    issue_type: str = "Task",
+    description: str | None = None,
+    assignee: str | None = None,
+    due_time: str | None = None,
+    priority: str | None = None,
+    labels: list[str] | None = None
+) -> JiraIssueDetail:
+    """
+    Create a new Jira issue.
+    
+    Args:
+        project_key: Project key (e.g., "KAN")
+        summary: Issue title/summary
+        issue_type: Issue type (default: "Task")
+        description: Issue description
+        assignee: Assignee display name or email (will be looked up)
+        due_time: Due date/time in ISO format (e.g., "2026-01-02T14:00:00Z")
+        priority: Priority name (e.g., "High", "Medium", "Low")
+        labels: List of label names
+    
+    Returns:
+        Created Jira issue details
+    """
+    auth = _get_jira_auth()
+    base_url = _get_jira_base_url()
+    
+    # Build issue fields
+    fields = {
+        "project": {"key": project_key},
+        "summary": summary,
+        "issuetype": {"name": issue_type}
+    }
+    
+    # Add description if provided
+    if description:
+        # Convert plain text to ADF format for Jira v3
+        fields["description"] = {
+            "type": "doc",
+            "version": 1,
+            "content": [
+                {
+                    "type": "paragraph",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": description
+                        }
+                    ]
+                }
+            ]
+        }
+    
+    # Look up assignee if provided
+    if assignee:
+        user = await find_user_by_name(assignee)
+        if user and user.get("accountId"):
+            fields["assignee"] = {"accountId": user["accountId"]}
+        else:
+            raise HTTPException(
+                status_code=404,
+                detail=f"User '{assignee}' not found in Jira"
+            )
+    
+    # Add due_time (custom field customfield_10039)
+    if due_time:
+        fields["customfield_10039"] = due_time
+    
+    # Add priority if provided
+    if priority:
+        fields["priority"] = {"name": priority}
+    
+    # Add labels if provided
+    if labels:
+        fields["labels"] = labels
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            response = await client.post(
+                f"{base_url}/rest/api/3/issue",
+                auth=auth,
+                json={"fields": fields}
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(
+                status_code=e.response.status_code,
+                detail=f"Jira API error: {e.response.text}"
+            )
+        except httpx.RequestError as e:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Failed to connect to Jira: {str(e)}"
+            )
+        
+        created_issue = response.json()
+        issue_key = created_issue["key"]
+        
+        # Fetch full issue details
+        return await get_single_issue(issue_key)
+
+
+async def update_issue(
+    issue_key: str,
+    summary: str | None = None,
+    description: str | None = None,
+    assignee: str | None = None,
+    due_time: str | None = None,
+    priority: str | None = None,
+    status: str | None = None,
+    labels: list[str] | None = None
+) -> JiraIssueDetail:
+    """
+    Update an existing Jira issue.
+    
+    Args:
+        issue_key: Issue key (e.g., "KAN-123")
+        summary: New summary/title (optional)
+        description: New description (optional)
+        assignee: New assignee display name or email (optional, will be looked up)
+        due_time: New due date/time in ISO format (optional)
+        priority: New priority name (optional)
+        status: New status name (optional - requires transition)
+        labels: New labels list (optional)
+    
+    Returns:
+        Updated Jira issue details
+    """
+    auth = _get_jira_auth()
+    base_url = _get_jira_base_url()
+    
+    # Build update fields
+    fields = {}
+    
+    if summary:
+        fields["summary"] = summary
+    
+    if description:
+        # Convert plain text to ADF format
+        fields["description"] = {
+            "type": "doc",
+            "version": 1,
+            "content": [
+                {
+                    "type": "paragraph",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": description
+                        }
+                    ]
+                }
+            ]
+        }
+    
+    # Look up assignee if provided
+    if assignee:
+        user = await find_user_by_name(assignee)
+        if user and user.get("accountId"):
+            fields["assignee"] = {"accountId": user["accountId"]}
+        else:
+            raise HTTPException(
+                status_code=404,
+                detail=f"User '{assignee}' not found in Jira"
+            )
+    
+    # Add due_time (custom field customfield_10039)
+    if due_time:
+        fields["customfield_10039"] = due_time
+    
+    # Add priority if provided
+    if priority:
+        fields["priority"] = {"name": priority}
+    
+    # Add labels if provided
+    if labels:
+        fields["labels"] = labels
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            # Update issue fields
+            if fields:
+                response = await client.put(
+                    f"{base_url}/rest/api/3/issue/{issue_key}",
+                    auth=auth,
+                    json={"fields": fields}
+                )
+                response.raise_for_status()
+            
+            # Handle status transition if provided
+            if status:
+                # First, get available transitions
+                transitions_response = await client.get(
+                    f"{base_url}/rest/api/3/issue/{issue_key}/transitions",
+                    auth=auth
+                )
+                transitions_response.raise_for_status()
+                transitions = transitions_response.json().get("transitions", [])
+                
+                # Find matching transition
+                transition_id = None
+                for transition in transitions:
+                    if transition["to"]["name"].lower() == status.lower():
+                        transition_id = transition["id"]
+                        break
+                
+                if transition_id:
+                    await client.post(
+                        f"{base_url}/rest/api/3/issue/{issue_key}/transitions",
+                        auth=auth,
+                        json={"transition": {"id": transition_id}}
+                    )
+                else:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Status transition to '{status}' not available. Available: {[t['to']['name'] for t in transitions]}"
+                    )
+            
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(
+                status_code=e.response.status_code,
+                detail=f"Jira API error: {e.response.text}"
+            )
+        except httpx.RequestError as e:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Failed to connect to Jira: {str(e)}"
+            )
+        
+        # Fetch updated issue details
+        return await get_single_issue(issue_key)
