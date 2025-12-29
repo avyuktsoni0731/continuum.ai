@@ -9,6 +9,7 @@ import sys
 import json
 import re
 import logging
+from collections import defaultdict
 from pathlib import Path
 from typing import Optional
 
@@ -608,15 +609,37 @@ I called these tools: {intent.get('reasoning', 'N/A')}
 Tool Results:
 {chr(10).join(results_detail)}
 
-Format this data into a clear, helpful response for the user. 
-CRITICAL: If there are multiple items in a list, you MUST show details for ALL items, not just the first one.
-- If there are results, present them in a readable, organized format
-- For lists with multiple items, show ALL items with their details (summary, time, etc.)
-- If there are errors, explain them clearly and suggest what might be wrong
-- If no results were found, explain why (e.g., "No open PRs found" or "Board ID not found")
-- Be concise but informative
-- Use bullet points or lists when showing multiple items
-- Include all relevant details for each item (time, summary, status, etc.)"""
+Format this data for Slack messaging. Use Slack-friendly formatting:
+- Use *bold* for emphasis (not **double asterisks**)
+- Use `code` for technical terms, IDs, or keys
+- Use _italic_ sparingly
+- Use emojis where appropriate (📅 for calendar, ✅ for success, ❌ for errors, 📋 for lists)
+- Group related items together
+- Use clear section headers
+- Keep formatting clean and readable
+
+CRITICAL RULES:
+1. If there are multiple items in a list, you MUST show details for ALL items, not just the first one
+2. For calendar events: Group by date, show time clearly, use 📅 emoji
+3. For Jira issues: Show key, summary, status, priority clearly
+4. For PRs: Show number, title, status, CI status clearly
+5. Use blank lines to separate sections for better readability
+6. Keep each line concise - Slack messages should be scannable
+
+Format example for calendar events:
+📅 *Events for [Date]*
+• *Event Name* - Time: 09:45 AM - 10:45 AM
+• *Event Name* - Time: 01:45 PM - 02:45 PM
+
+Format example for Jira issues:
+📋 *Jira Issues*
+• `PROJ-123` *Issue Title* - Status: In Progress - Priority: High
+
+Format example for PRs:
+🔀 *Pull Requests*
+• PR #42 *PR Title* - Status: Open - CI: ✅ Passing
+
+Now format the data accordingly:"""
         
         try:
             response = self.client.models.generate_content(
@@ -632,34 +655,67 @@ CRITICAL: If there are multiple items in a list, you MUST show details for ALL i
             return self._fallback_formatting(tool_results)
     
     def _fallback_formatting(self, tool_results: list[dict]) -> str:
-        """Simple fallback formatting."""
+        """Simple fallback formatting optimized for Slack."""
         lines = []
         for result in tool_results:
             if result["success"]:
                 data = result["data"]
+                tool_name = result.get('tool', '')
+                
                 if isinstance(data, list):
                     if len(data) == 0:
                         lines.append("No results found.")
                     else:
-                        lines.append(f"Found {len(data)} items:")
-                        # Show ALL items, not just first 10
-                        for item in data:
-                            if isinstance(item, dict):
-                                summary = item.get('summary') or item.get('title') or item.get('name', 'Untitled')
-                                # Include time if available (for calendar events)
-                                start = item.get('start') or item.get('start_time', '')
-                                end = item.get('end') or item.get('end_time', '')
-                                if start:
-                                    lines.append(f"  • {summary}")
+                        # Determine emoji based on tool type
+                        emoji = "📋"
+                        if "calendar" in tool_name or "event" in tool_name:
+                            emoji = "📅"
+                        elif "jira" in tool_name:
+                            emoji = "📋"
+                        elif "github" in tool_name or "pr" in tool_name:
+                            emoji = "🔀"
+                        
+                        lines.append(f"{emoji} *Found {len(data)} items:*\n")
+                        
+                        # Group calendar events by date
+                        if "calendar" in tool_name or "event" in tool_name:
+                            events_by_date = defaultdict(list)
+                            for item in data:
+                                if isinstance(item, dict):
+                                    start = item.get('start') or item.get('start_time', '')
+                                    # Extract date from start time
+                                    date_key = start.split('T')[0] if start and 'T' in start else 'Unknown'
+                                    events_by_date[date_key].append(item)
+                            
+                            for date, events in sorted(events_by_date.items()):
+                                lines.append(f"*{date}*")
+                                for item in events:
+                                    summary = item.get('summary') or item.get('title', 'Untitled')
+                                    start = item.get('start') or item.get('start_time', '')
+                                    end = item.get('end') or item.get('end_time', '')
                                     if start and end:
-                                        lines.append(f"    Time: {start} - {end}")
-                                else:
-                                    lines.append(f"  • {summary}")
+                                        # Format time nicely
+                                        start_time = start.split('T')[1][:5] if 'T' in start else start
+                                        end_time = end.split('T')[1][:5] if 'T' in end else end
+                                        lines.append(f"• *{summary}* - {start_time} - {end_time}")
+                                    else:
+                                        lines.append(f"• *{summary}*")
+                                lines.append("")  # Blank line between dates
+                        else:
+                            # For other types, simple list
+                            for item in data:
+                                if isinstance(item, dict):
+                                    summary = item.get('summary') or item.get('title') or item.get('name', 'Untitled')
+                                    key = item.get('key') or item.get('number') or ''
+                                    if key:
+                                        lines.append(f"• `{key}` *{summary}*")
+                                    else:
+                                        lines.append(f"• *{summary}*")
                 elif isinstance(data, dict):
                     summary = data.get('summary') or data.get('name') or str(data)[:100]
-                    lines.append(f"Result: {summary}")
+                    lines.append(f"*Result:* {summary}")
             else:
-                lines.append(f"❌ Error: {result['error']}")
+                lines.append(f"❌ *Error:* {result['error']}")
         
         return "\n".join(lines) if lines else "No results found."
     
