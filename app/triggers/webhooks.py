@@ -136,7 +136,7 @@ async def handle_jira_webhook(payload: Dict[str, Any]) -> bool:
     
     Supported events:
     - jira:issue_created
-    - jira:issue_updated (priority, due date changes)
+    - jira:issue_updated (priority, due date changes, status changes, assignee changes)
     - jira:issue_assigned
     """
     webhook_event = payload.get("webhookEvent", "")
@@ -145,16 +145,24 @@ async def handle_jira_webhook(payload: Dict[str, Any]) -> bool:
     user = payload.get("user", {})
     
     if not issue:
+        logger.warning("Jira webhook: No issue in payload")
         return False
     
     issue_key = issue.get("key")
     if not issue_key:
+        logger.warning("Jira webhook: No issue key in payload")
         return False
     
-    logger.info(f"Jira webhook: {webhook_event} for {issue_key}")
+    logger.info(f"Jira webhook received: {webhook_event} for {issue_key}")
     
     # Extract change details from changelog
     change_details = _extract_jira_change_details(webhook_event, changelog, user, issue)
+    
+    # Log what changes were detected
+    if change_details.get("changes"):
+        logger.info(f"Detected {len(change_details['changes'])} change(s) for {issue_key}: {change_details.get('what_changed', 'unknown')}")
+    else:
+        logger.info(f"No changelog items found for {issue_key}, event type: {webhook_event}")
     
     fields = issue.get("fields", {})
     
@@ -191,6 +199,7 @@ async def handle_jira_webhook(payload: Dict[str, Any]) -> bool:
     # Process trigger
     await process_trigger(trigger_event)
     
+    logger.info(f"Successfully processed Jira webhook for {issue_key}")
     return True
 
 
@@ -206,10 +215,15 @@ def _extract_jira_change_details(webhook_event: str, changelog: Dict[str, Any], 
     items = changelog.get("items", [])
     changes = []
     
+    logger.debug(f"Processing {len(items)} changelog items for event {webhook_event}")
+    
     for item in items:
         field = item.get("field", "")
+        field_type = item.get("fieldtype", "")
         from_value = item.get("fromString", item.get("from"))
         to_value = item.get("toString", item.get("to"))
+        
+        logger.debug(f"Processing changelog item: field={field}, from={from_value}, to={to_value}")
         
         if field == "assignee":
             changes.append({
@@ -246,6 +260,9 @@ def _extract_jira_change_details(webhook_event: str, changelog: Dict[str, Any], 
                 "to": to_value,
                 "description": f"Title updated"
             })
+        else:
+            # Log unknown fields for debugging
+            logger.debug(f"Unknown changelog field: {field} (type: {field_type})")
     
     change_details["changes"] = changes
     
@@ -254,16 +271,32 @@ def _extract_jira_change_details(webhook_event: str, changelog: Dict[str, Any], 
         change_details["what_changed"] = ", ".join([c["field"] for c in changes])
         change_details["description"] = " | ".join([c["description"] for c in changes])
     else:
+        # Handle events without changelog (like issue_created)
         if webhook_event == "jira:issue_created":
             change_details["what_changed"] = "issue_created"
             change_details["description"] = "New issue created"
+            # Add a change entry for created events
+            changes.append({
+                "field": "created",
+                "from": None,
+                "to": issue.get("fields", {}).get("summary", ""),
+                "description": "New issue created"
+            })
         elif webhook_event == "jira:issue_assigned":
             assignee = issue.get("fields", {}).get("assignee", {}).get("displayName", "unknown")
             change_details["what_changed"] = "assignee"
             change_details["description"] = f"Assigned to {assignee}"
+            changes.append({
+                "field": "assignee",
+                "from": None,
+                "to": assignee,
+                "description": f"Assigned to {assignee}"
+            })
         else:
             change_details["what_changed"] = webhook_event
             change_details["description"] = f"Issue {webhook_event}"
+    
+    change_details["changes"] = changes  # Update with any added changes
     
     return change_details
 
