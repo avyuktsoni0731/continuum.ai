@@ -51,9 +51,12 @@ class CalendarAvailability(BaseModel):
     free_hours: float
 
 
-def _get_credentials():
+def _get_credentials(scope: str = 'readonly'):
     """
     Get Google Calendar credentials.
+    
+    Args:
+        scope: 'readonly' or 'write' - determines the scope of permissions
     
     For development, use service account or OAuth.
     For production, use service account key file.
@@ -67,6 +70,12 @@ def _get_credentials():
             status_code=500,
             detail="Google Calendar API libraries not installed. Run: pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib"
         )
+    
+    # Determine scope
+    if scope == 'write':
+        SCOPES = ['https://www.googleapis.com/auth/calendar']
+    else:
+        SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
     
     # Try service account first (production)
     service_account_file = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
@@ -90,7 +99,6 @@ def _get_credentials():
                 token_data = json.load(f)
                 if token_data.get('type') == 'service_account':
                     # It's a service account
-                    SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
                     credentials = service_account.Credentials.from_service_account_file(
                         token_file, scopes=SCOPES
                     )
@@ -104,7 +112,6 @@ def _get_credentials():
             project_root = Path(__file__).resolve().parent.parent.parent
             service_account_file = str(project_root / service_account_file)
         if os.path.exists(service_account_file):
-            SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
             credentials = service_account.Credentials.from_service_account_file(
                 service_account_file, scopes=SCOPES
             )
@@ -121,8 +128,7 @@ def _get_credentials():
             token_file = str(token_file_abs)
     
     if os.path.exists(token_file):
-        creds = Credentials.from_authorized_user_file(token_file, 
-            ['https://www.googleapis.com/auth/calendar.readonly'])
+        creds = Credentials.from_authorized_user_file(token_file, SCOPES)
     
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
