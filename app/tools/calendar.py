@@ -47,7 +47,7 @@ class CalendarAvailability(BaseModel):
     end_date: str
     events: list[CalendarEvent]
     free_slots: list[FreeSlot]
-    busy_hours: int
+    busy_hours: float
     free_hours: float
 
 
@@ -378,7 +378,7 @@ def _calculate_free_slots(
     Returns:
         List of free time slots
     """
-    from datetime import timezone
+    from datetime import timezone, date
     
     # Parse dates
     start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
@@ -394,49 +394,86 @@ def _calculate_free_slots(
     sorted_events = sorted(events, key=lambda e: e.start)
     
     free_slots = []
-    current_time = start_dt
     
-    for event in sorted_events:
-        event_start = datetime.fromisoformat(event.start.replace('Z', '+00:00'))
-        if event_start.tzinfo is None:
-            event_start = event_start.replace(tzinfo=timezone.utc)
-        
-        # Only consider work hours
-        if current_time.hour < work_hours_start:
-            current_time = current_time.replace(hour=work_hours_start, minute=0, second=0)
-        
-        if event_start.hour > work_hours_end:
-            event_start = event_start.replace(hour=work_hours_end, minute=0, second=0)
-        
-        # If there's a gap before this event, it's free time
-        if current_time < event_start:
-            gap_minutes = (event_start - current_time).total_seconds() / 60
-            if gap_minutes >= 15:  # Only slots >= 15 minutes
-                free_slots.append(FreeSlot(
-                    start=current_time.isoformat(),
-                    end=event_start.isoformat(),
-                    duration_minutes=int(gap_minutes)
-                ))
-        
-        # Move current_time to end of this event
-        event_end = datetime.fromisoformat(event.end.replace('Z', '+00:00'))
-        if event_end.tzinfo is None:
-            event_end = event_end.replace(tzinfo=timezone.utc)
-        current_time = max(current_time, event_end)
+    # Process each day in the range
+    current_date = start_dt.date()
+    end_date_only = end_dt.date()
     
-    # Check if there's free time after the last event
-    if current_time < end_dt:
-        if current_time.hour < work_hours_end:
-            if end_dt.hour > work_hours_end:
-                end_dt = end_dt.replace(hour=work_hours_end, minute=0, second=0)
+    while current_date <= end_date_only:
+        # Get work hours for this day
+        day_start = datetime.combine(current_date, datetime.min.time()).replace(
+            hour=work_hours_start, minute=0, second=0, tzinfo=start_dt.tzinfo
+        )
+        day_end = datetime.combine(current_date, datetime.min.time()).replace(
+            hour=work_hours_end, minute=0, second=0, tzinfo=start_dt.tzinfo
+        )
+        
+        # Adjust for first/last day
+        if current_date == start_dt.date():
+            day_start = max(day_start, start_dt)
+        if current_date == end_dt.date():
+            day_end = min(day_end, end_dt)
+        
+        # Get events for this day
+        day_events = [
+            e for e in sorted_events
+            if day_start <= datetime.fromisoformat(e.start.replace('Z', '+00:00')).replace(tzinfo=start_dt.tzinfo) < day_end + timedelta(days=1)
+        ]
+        
+        # If no events, entire workday is free
+        if not day_events:
+            if day_start < day_end:
+                duration_minutes = int((day_end - day_start).total_seconds() / 60)
+                if duration_minutes >= 15:
+                    free_slots.append(FreeSlot(
+                        start=day_start.isoformat(),
+                        end=day_end.isoformat(),
+                        duration_minutes=duration_minutes
+                    ))
+        else:
+            # Process gaps between events
+            current_time = day_start
             
-            gap_minutes = (end_dt - current_time).total_seconds() / 60
-            if gap_minutes >= 15:
-                free_slots.append(FreeSlot(
-                    start=current_time.isoformat(),
-                    end=end_dt.isoformat(),
-                    duration_minutes=int(gap_minutes)
-                ))
+            for event in day_events:
+                event_start = datetime.fromisoformat(event.start.replace('Z', '+00:00'))
+                if event_start.tzinfo is None:
+                    event_start = event_start.replace(tzinfo=start_dt.tzinfo)
+                
+                event_end = datetime.fromisoformat(event.end.replace('Z', '+00:00'))
+                if event_end.tzinfo is None:
+                    event_end = event_end.replace(tzinfo=start_dt.tzinfo)
+                
+                # Only consider events within work hours
+                if event_start < day_end and event_end > day_start:
+                    # Clamp event times to work hours
+                    event_start = max(event_start, day_start)
+                    event_end = min(event_end, day_end)
+                    
+                    # If there's a gap before this event, it's free time
+                    if current_time < event_start:
+                        gap_minutes = (event_start - current_time).total_seconds() / 60
+                        if gap_minutes >= 15:  # Only slots >= 15 minutes
+                            free_slots.append(FreeSlot(
+                                start=current_time.isoformat(),
+                                end=event_start.isoformat(),
+                                duration_minutes=int(gap_minutes)
+                            ))
+                    
+                    # Move current_time to end of this event
+                    current_time = max(current_time, event_end)
+            
+            # Check if there's free time after the last event of the day
+            if current_time < day_end:
+                gap_minutes = (day_end - current_time).total_seconds() / 60
+                if gap_minutes >= 15:
+                    free_slots.append(FreeSlot(
+                        start=current_time.isoformat(),
+                        end=day_end.isoformat(),
+                        duration_minutes=int(gap_minutes)
+                    ))
+        
+        # Move to next day
+        current_date += timedelta(days=1)
     
     return free_slots
 
@@ -481,16 +518,74 @@ async def get_availability(
     # Calculate free slots
     free_slots = _calculate_free_slots(events, start_date, end_date, work_hours_start, work_hours_end)
     
-    # Calculate total busy/free hours
-    total_busy_minutes = sum(
-        (datetime.fromisoformat(e.end.replace('Z', '+00:00')) - 
-         datetime.fromisoformat(e.start.replace('Z', '+00:00'))).total_seconds() / 60
-        for e in events
-    )
+    # Calculate total busy hours (only during work hours)
+    from datetime import timezone, date
+    
+    start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+    end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+    
+    if start_dt.tzinfo is None:
+        start_dt = start_dt.replace(tzinfo=timezone.utc)
+    if end_dt.tzinfo is None:
+        end_dt = end_dt.replace(tzinfo=timezone.utc)
+    
+    # Calculate total work hours in the period
+    total_work_hours = 0
+    current_date = start_dt.date()
+    end_date_only = end_dt.date()
+    
+    while current_date <= end_date_only:
+        day_start = datetime.combine(current_date, datetime.min.time()).replace(
+            hour=work_hours_start, minute=0, second=0, tzinfo=start_dt.tzinfo
+        )
+        day_end = datetime.combine(current_date, datetime.min.time()).replace(
+            hour=work_hours_end, minute=0, second=0, tzinfo=start_dt.tzinfo
+        )
+        
+        # Adjust for first/last day
+        if current_date == start_dt.date():
+            day_start = max(day_start, start_dt)
+        if current_date == end_dt.date():
+            day_end = min(day_end, end_dt)
+        
+        if day_start < day_end:
+            day_hours = (day_end - day_start).total_seconds() / 3600
+            total_work_hours += day_hours
+        
+        current_date += timedelta(days=1)
+    
+    # Calculate busy hours (only count time within work hours)
+    total_busy_minutes = 0
+    for e in events:
+        event_start = datetime.fromisoformat(e.start.replace('Z', '+00:00'))
+        if event_start.tzinfo is None:
+            event_start = event_start.replace(tzinfo=timezone.utc)
+        
+        event_end = datetime.fromisoformat(e.end.replace('Z', '+00:00'))
+        if event_end.tzinfo is None:
+            event_end = event_end.replace(tzinfo=timezone.utc)
+        
+        # Only count busy time within work hours
+        event_date = event_start.date()
+        day_start = datetime.combine(event_date, datetime.min.time()).replace(
+            hour=work_hours_start, minute=0, second=0, tzinfo=event_start.tzinfo
+        )
+        day_end = datetime.combine(event_date, datetime.min.time()).replace(
+            hour=work_hours_end, minute=0, second=0, tzinfo=event_start.tzinfo
+        )
+        
+        # Clamp event to work hours
+        busy_start = max(event_start, day_start)
+        busy_end = min(event_end, day_end)
+        
+        if busy_start < busy_end:
+            busy_minutes = (busy_end - busy_start).total_seconds() / 60
+            total_busy_minutes += busy_minutes
+    
     total_busy_hours = total_busy_minutes / 60
     
-    total_free_minutes = sum(slot.duration_minutes for slot in free_slots)
-    total_free_hours = total_free_minutes / 60
+    # Free hours = total work hours - busy hours
+    total_free_hours = max(0, total_work_hours - total_busy_hours)
     
     return CalendarAvailability(
         start_date=start_date,
