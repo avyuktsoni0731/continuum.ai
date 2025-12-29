@@ -148,15 +148,9 @@ async def _execute_tool(tool_name: str, params: Dict[str, Any]) -> Dict[str, Any
         Tool execution result
     """
     try:
-        # Import tool functions
-        from app.tools.jira import (
-            create_issue, update_issue, get_single_issue, find_user_by_name
-        )
-        from app.tools.github import create_pull_request
-        from app.tools.calendar import get_availability
-        
-        # Route to appropriate tool
+        # Route to appropriate tool - import only when needed
         if tool_name == "create_jira_issue":
+            from app.tools.jira import create_issue
             result = await create_issue(**params)
             return {
                 "success": True,
@@ -164,6 +158,7 @@ async def _execute_tool(tool_name: str, params: Dict[str, Any]) -> Dict[str, Any
             }
         
         elif tool_name == "update_jira_issue":
+            from app.tools.jira import update_issue
             result = await update_issue(**params)
             return {
                 "success": True,
@@ -171,6 +166,7 @@ async def _execute_tool(tool_name: str, params: Dict[str, Any]) -> Dict[str, Any
             }
         
         elif tool_name == "get_jira_issue":
+            from app.tools.jira import get_single_issue
             result = await get_single_issue(**params)
             return {
                 "success": True,
@@ -178,6 +174,7 @@ async def _execute_tool(tool_name: str, params: Dict[str, Any]) -> Dict[str, Any
             }
         
         elif tool_name == "find_jira_user":
+            from app.tools.jira import find_user_by_name
             result = await find_user_by_name(**params)
             return {
                 "success": True,
@@ -185,6 +182,7 @@ async def _execute_tool(tool_name: str, params: Dict[str, Any]) -> Dict[str, Any
             }
         
         elif tool_name == "check_calendar_availability":
+            from app.tools.calendar import get_availability
             result = await get_availability(**params)
             return {
                 "success": True,
@@ -192,6 +190,7 @@ async def _execute_tool(tool_name: str, params: Dict[str, Any]) -> Dict[str, Any
             }
         
         elif tool_name == "create_github_pr":
+            from app.tools.github import create_pull_request
             result = await create_pull_request(**params)
             return {
                 "success": True,

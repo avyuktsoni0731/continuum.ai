@@ -434,3 +434,71 @@ async def get_pr_context(
         }
     }
 
+
+async def create_pull_request(
+    title: str,
+    body: str | None = None,
+    head: str | None = None,
+    base: str = "main",
+    owner: str | None = None,
+    repo: str | None = None
+) -> GitHubPRDetail:
+    """
+    Create a new pull request.
+    
+    Args:
+        title: PR title
+        body: PR description/body
+        head: Source branch (required - must exist)
+        base: Target branch (default: "main")
+        owner: Repository owner (default: from env)
+        repo: Repository name (default: from env)
+    
+    Returns:
+        Created PR details
+    """
+    headers = _get_github_headers()
+    if not owner or not repo:
+        owner, repo = _get_default_repo()
+    
+    # Head branch is required
+    if not head:
+        raise HTTPException(
+            status_code=400,
+            detail="head branch is required. Create a branch first or specify existing branch."
+        )
+    
+    payload = {
+        "title": title,
+        "head": head,
+        "base": base
+    }
+    
+    if body:
+        payload["body"] = body
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            response = await client.post(
+                f"https://api.github.com/repos/{owner}/{repo}/pulls",
+                headers=headers,
+                json=payload
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(
+                status_code=e.response.status_code,
+                detail=f"GitHub API error: {e.response.text}"
+            )
+        except httpx.RequestError as e:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Failed to connect to GitHub: {str(e)}"
+            )
+        
+        pr_data = response.json()
+        pr_number = pr_data["number"]
+        
+        # Fetch full PR details
+        return await get_pull_request(pr_number, owner, repo)
+
