@@ -663,7 +663,128 @@ Do not include any markdown, code blocks, or text outside the JSON object."""
         
         return decision_traces
     
-    async def format_response(self, user_message: str, tool_results: list[dict], intent: dict, decision_traces: Optional[list[dict]] = None) -> str:
+    async def _execute_delegation(self, trace: dict, tool_results: list[dict]) -> Optional[dict]:
+        """
+        Execute delegation when decision is DELEGATE.
+        
+        Returns delegation result with teammate info.
+        """
+        try:
+            from app.delegation.selector import select_teammate
+            from app.delegation.notifier import notify_teammate
+            from app.delegation.models import DelegationNotification
+            from app.policy.scoring import (
+                extract_task_context_from_pr,
+                extract_task_context_from_jira
+            )
+            
+            decision = trace.get("decision", {})
+            task_type = trace.get("task_type")
+            task_id = trace.get("task_id")
+            
+            # Find task context from tool results
+            task_context = None
+            task_data = None
+            
+            for result in tool_results:
+                if not result.get("success"):
+                    continue
+                
+                data = result["data"]
+                
+                if task_type == "pr" and isinstance(data, dict):
+                    task_context = extract_task_context_from_pr(data)
+                    task_data = data
+                    break
+                elif task_type == "jira_issue" and isinstance(data, dict):
+                    task_context = extract_task_context_from_jira(data)
+                    task_data = data
+                    break
+                elif task_type == "jira_issue" and isinstance(data, list) and data:
+                    # Find the specific issue
+                    for issue in data:
+                        if issue.get("key") == task_id:
+                            task_context = extract_task_context_from_jira(issue)
+                            task_data = issue
+                            break
+            
+            if not task_context:
+                logger.warning(f"Could not find task context for {task_id}")
+                return None
+            
+            # Select best teammate
+            teammate_score = await select_teammate(task_context)
+            
+            if not teammate_score:
+                logger.warning("No suitable teammate found for delegation")
+                return {
+                    "success": False,
+                    "reason": "No suitable teammate available"
+                }
+            
+            teammate = teammate_score.teammate
+            
+            # Determine action requested based on task type
+            if task_type == "pr":
+                action_requested = "review and approve"
+                urgency = "high" if decision.get("criticality_score", 0) > 70 else "medium"
+            elif task_type == "jira_issue":
+                action_requested = "review and update"
+                urgency = "high" if decision.get("criticality_score", 0) > 70 else "medium"
+            else:
+                action_requested = "review"
+                urgency = "medium"
+            
+            # Build context for notification
+            context = {
+                "criticality_score": decision.get("criticality_score", 0),
+                "reasoning": decision.get("reasoning", ""),
+            }
+            
+            # Add URL if available
+            if task_type == "pr" and task_data:
+                pr_detail = task_data.get("pr", {})
+                context["url"] = pr_detail.get("html_url", "")
+            elif task_type == "jira_issue":
+                # TODO: Build Jira URL
+                context["url"] = f"https://continuum-ai.atlassian.net/browse/{task_id}"
+            
+            # Create notification
+            notification = DelegationNotification(
+                teammate=teammate,
+                task_type=task_type,
+                task_id=task_id,
+                task_title=task_context.title,
+                action_requested=action_requested,
+                context=context,
+                urgency=urgency
+            )
+            
+            # Send notification
+            success = await notify_teammate(notification)
+            
+            return {
+                "success": success,
+                "teammate": teammate.username,
+                "task_id": task_id,
+                "reasoning": teammate_score.reasoning
+            }
+            
+        except Exception as e:
+            logger.error(f"Delegation execution failed: {e}", exc_info=True)
+            return {
+                "success": False,
+                "error": str(e)
+            }
+    
+    async def format_response(
+        self, 
+        user_message: str, 
+        tool_results: list[dict], 
+        intent: dict, 
+        decision_traces: Optional[list[dict]] = None,
+        delegation_results: Optional[list[dict]] = None
+    ) -> str:
         """
         Format tool results into a human-friendly response using Gemini.
         
@@ -717,12 +838,22 @@ Do not include any markdown, code blocks, or text outside the JSON object."""
                 decision_info += f"AFS: {decision.get('automation_feasibility_score', 0):.1f}, "
                 decision_info += f"Reasoning: {decision.get('reasoning', 'N/A')}\n"
         
+        # Add delegation results if available
+        delegation_info = ""
+        if delegation_results:
+            delegation_info = "\n\nDelegation Actions:\n"
+            for result in delegation_results:
+                if result.get("success"):
+                    delegation_info += f"- Delegated to {result.get('teammate')}: {result.get('reasoning', 'N/A')}\n"
+                else:
+                    delegation_info += f"- Delegation failed: {result.get('reason', result.get('error', 'Unknown'))}\n"
+        
         prompt = f"""User asked: "{user_message}"
 
 I called these tools: {intent.get('reasoning', 'N/A')}
 
 Tool Results:
-{chr(10).join(results_detail)}{decision_info}
+{chr(10).join(results_detail)}{decision_info}{delegation_info}
 
 Format this data for Slack messaging. Use Slack-friendly formatting:
 - Use *bold* for emphasis (not **double asterisks**)
@@ -745,6 +876,9 @@ CRITICAL RULES:
    - Criticality Score (CS) and Automation Feasibility Score (AFS)
    - Reasoning: why this action was chosen
    - Format: "💡 *Decision for [task]*: [action] | CS: [score] | AFS: [score] | *Why*: [reasoning]"
+8. If Delegation Actions are provided, mention:
+   - "✅ Delegated to [teammate]: [reasoning]"
+   - Or "❌ Delegation failed: [reason]"
 
 Format example for calendar events:
 📅 *Events for [Date]*
@@ -772,9 +906,14 @@ Now format the data accordingly:"""
         except Exception as e:
             logger.error(f"Response formatting failed: {e}", exc_info=True)
             # Fallback formatting
-            return self._fallback_formatting(tool_results, decision_traces)
+            return self._fallback_formatting(tool_results, decision_traces, delegation_results)
     
-    def _fallback_formatting(self, tool_results: list[dict], decision_traces: Optional[list[dict]] = None) -> str:
+    def _fallback_formatting(
+        self, 
+        tool_results: list[dict], 
+        decision_traces: Optional[list[dict]] = None,
+        delegation_results: Optional[list[dict]] = None
+    ) -> str:
         """Simple fallback formatting optimized for Slack."""
         lines = []
         for result in tool_results:
@@ -852,6 +991,18 @@ Now format the data accordingly:"""
                 lines.append(f"  CS: {cs:.1f} | AFS: {afs:.1f}")
                 lines.append(f"  *Why*: {reasoning}")
         
+        # Add delegation results if available
+        if delegation_results:
+            lines.append("\n👥 *Delegation Actions:*")
+            for result in delegation_results:
+                if result.get("success"):
+                    teammate = result.get("teammate", "unknown")
+                    reasoning = result.get("reasoning", "N/A")
+                    lines.append(f"✅ Delegated to *{teammate}*: {reasoning}")
+                else:
+                    reason = result.get("reason") or result.get("error", "Unknown error")
+                    lines.append(f"❌ Delegation failed: {reason}")
+        
         return "\n".join(lines) if lines else "No results found."
     
     async def chat(self, user_message: str) -> str:
@@ -885,8 +1036,23 @@ Now format the data accordingly:"""
         if tool_results:
             decision_traces = await self._apply_policy_engine(tool_results, user_message)
         
-        # Format response (include decision traces if available)
-        response = await self.format_response(user_message, tool_results, intent, decision_traces)
+        # Execute delegation if decision is DELEGATE
+        delegation_results = []
+        for trace in decision_traces:
+            decision = trace.get("decision", {})
+            if decision.get("action") == "delegate":
+                delegation_result = await self._execute_delegation(trace, tool_results)
+                if delegation_result:
+                    delegation_results.append(delegation_result)
+        
+        # Format response (include decision traces and delegation results)
+        response = await self.format_response(
+            user_message, 
+            tool_results, 
+            intent, 
+            decision_traces,
+            delegation_results
+        )
         
         # Add to history
         self.conversation_history.append({"role": "assistant", "content": response})

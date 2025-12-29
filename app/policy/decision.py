@@ -69,8 +69,8 @@ def decide_action(
         reasoning_parts.append(f"High criticality (CS: {cs:.1f})")
         reasoning_parts.append("User is unavailable")
         reasoning_parts.append("Delegate to best teammate")
-        # TODO: Implement teammate selection
-        selected_teammate = "teammate_to_select"
+        # Teammate selection will happen in conversation agent
+        selected_teammate = None  # Will be set during delegation execution
     
     # High criticality + high AFS + automation enabled → Consider automation
     elif cs > 60 and afs >= 70 and automation_enabled:
@@ -95,7 +95,7 @@ def decide_action(
             reasoning_parts.append("Automation not safe")
             reasoning_parts.append(guardrail_result.reason)
             reasoning_parts.append("Delegate instead")
-            selected_teammate = "teammate_to_select"
+            selected_teammate = None  # Will be set during delegation execution
     
     # Low criticality → Summarize for later
     elif cs < 40:
