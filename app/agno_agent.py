@@ -342,6 +342,33 @@ def is_calendar_request(message: str) -> bool:
     return False
 
 
+def is_memory_request(message: str) -> bool:
+    """
+    Determine if a message is a memory/context-related request.
+    
+    Args:
+        message: User message
+        
+    Returns:
+        True if message appears to be memory-related
+    """
+    message_lower = message.lower()
+    
+    # Memory/Context keywords
+    memory_keywords = [
+        "remember", "forget", "recall", "memorize",
+        "i am", "my name is", "my role", "my skill",
+        "who am i", "what do you know", "context",
+        "save this", "note that", "update my"
+    ]
+    
+    # Check for keywords
+    if any(keyword in message_lower for keyword in memory_keywords):
+        return True
+    
+    return False
+
+
 def should_use_agno(message: str) -> bool:
     """
     Determine if a message should be handled by Agno agent.
@@ -354,4 +381,9 @@ def should_use_agno(message: str) -> bool:
     Returns:
         True if message should be routed to Agno
     """
-    return is_jira_request(message) or is_github_request(message) or is_calendar_request(message)
+    return (
+        is_jira_request(message) or 
+        is_github_request(message) or 
+        is_calendar_request(message) or 
+        is_memory_request(message)
+    )
