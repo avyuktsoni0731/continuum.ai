@@ -115,17 +115,19 @@ MCP_TOOLS = [
     },
     {
         "name": "update_github_pr",
-        "description": "Update an existing PR (title, description, state, base branch). Extract PR number from text.",
+        "description": "Update an existing PR (title, description/body, state, base branch). Extract PR number from text. Use 'description' parameter for PR body/description.",
         "parameters": {
             "pr_number": "integer (required)",
             "title": "string (optional)",
-            "body": "string (optional)",
+            "body": "string (optional, PR description/body)",
+            "description": "string (optional, alias for body - use this for PR description)",
             "state": "string (optional: 'open' or 'closed')",
             "base": "string (optional)"
         },
         "examples": [
-            "update PR #42 description",
+            "update PR #42 description to 'New description'",
             "change PR 10 title to 'New Title'",
+            "add description 'Fixed bug' to PR #5",
             "close PR #5"
         ]
     },
@@ -704,6 +706,7 @@ Do not include any markdown, code blocks, or text outside the JSON object."""
                         pr_number=params.get("pr_number"),
                         title=params.get("title"),
                         body=params.get("body"),
+                        description=params.get("description"),  # Support description alias
                         state=params.get("state"),
                         base=params.get("base")
                     )

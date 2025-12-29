@@ -414,6 +414,7 @@ async def update_github_pr(
     pr_number: int,
     title: str | None = None,
     body: str | None = None,
+    description: str | None = None,
     state: str | None = None,
     base: str | None = None
 ) -> dict:
@@ -424,6 +425,7 @@ async def update_github_pr(
         pr_number: PR number
         title: New title (optional)
         body: New description/body (optional)
+        description: Alias for body - same as body parameter (optional)
         state: New state - "open" or "closed" (optional)
         base: New base branch (optional)
     
@@ -435,6 +437,7 @@ async def update_github_pr(
         pr_number=pr_number,
         title=title,
         body=body,
+        description=description,
         state=state,
         base=base
     )
