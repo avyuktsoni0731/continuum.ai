@@ -145,13 +145,28 @@ class ConversationalAgent:
         project_id = os.getenv("GCP_PROJECT_ID", "continuum-ai-482615")
         location = os.getenv("GCP_LOCATION", "global")
         
-        self.client = genai.Client(
-            vertexai=True,
-            project=project_id,
-            location=location
-        )
-        self.model = "gemini-3-pro-preview"
-        self.conversation_history = []
+        # Check for credentials
+        creds_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+        if creds_path:
+            logger.info(f"Using GCP credentials from: {creds_path}")
+            if not os.path.exists(creds_path):
+                logger.warning(f"Credentials file not found: {creds_path}")
+        else:
+            logger.warning("GOOGLE_APPLICATION_CREDENTIALS not set. Will try default credentials.")
+            logger.warning("For EC2, set GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account-key.json")
+        
+        try:
+            self.client = genai.Client(
+                vertexai=True,
+                project=project_id,
+                location=location
+            )
+            self.model = "gemini-3-pro-preview"
+            self.conversation_history = []
+            logger.info("Gemini client initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize Gemini client: {e}")
+            raise
     
     def _get_tools_prompt(self) -> str:
         """Generate prompt describing available tools with examples."""
@@ -370,9 +385,33 @@ Do not include any markdown, code blocks, or text outside the JSON object."""
     def _fallback_intent_parsing(self, message: str) -> dict:
         """Simple keyword-based intent parsing fallback."""
         logger.warning(f"Using fallback intent parsing for: {message}")
-        message_lower = message.lower()
+        message_lower = message.lower().strip()
         
+        # Handle "get jira boards" or "show jira boards" or just "jira boards"
         if "jira" in message_lower and "board" in message_lower:
+            # Check if asking for specific board issues
+            if "issue" in message_lower or "task" in message_lower:
+                # Try to extract board ID
+                board_match = re.search(r'board\s*(?:id\s*)?(\d+)', message_lower)
+                if board_match:
+                    board_id = int(board_match.group(1))
+                    return {
+                        "tools": [{"name": "get_jira_board_issues", "params": {"board_id": board_id}}],
+                        "reasoning": f"User wants issues from board {board_id} (fallback parsing)"
+                    }
+            # Check if asking for a specific board by number
+            board_match = re.search(r'board\s*(?:id\s*)?(\d+)', message_lower)
+            if board_match:
+                board_id = int(board_match.group(1))
+                return {
+                    "tools": [{"name": "get_jira_board_issues", "params": {"board_id": board_id}}],
+                    "reasoning": f"User wants issues from board {board_id} (fallback parsing)"
+                }
+            # Default: list all boards
+            return {
+                "tools": [{"name": "get_jira_boards", "params": {}}],
+                "reasoning": "User wants to see Jira boards (fallback parsing)"
+            }
             if "issue" in message_lower or "task" in message_lower:
                 # Try to extract board ID
                 board_match = re.search(r'board\s*(?:id\s*)?(\d+)', message_lower)
