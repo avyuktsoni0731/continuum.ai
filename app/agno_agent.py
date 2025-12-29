@@ -16,9 +16,20 @@ sys.path.insert(0, str(project_root))
 
 logger = logging.getLogger(__name__)
 
+AGNO_AVAILABLE = False
+AGNO_ERROR = None
+
+# Try importing Agno components step by step to identify the issue
 try:
+    logger.info("Attempting to import agno.agent...")
     from agno.agent import Agent
+    logger.info("Successfully imported agno.agent")
+    
+    logger.info("Attempting to import agno.models...")
     from agno.models import Gemini
+    logger.info("Successfully imported agno.models")
+    
+    logger.info("Attempting to import Jira tools...")
     from app.agno_tools.jira_tools import (
         get_jira_issues_tool,
         get_jira_issue_tool,
@@ -29,10 +40,14 @@ try:
         create_jira_issue_tool,
         update_jira_issue_tool
     )
+    logger.info("Successfully imported all Jira tools")
     AGNO_AVAILABLE = True
 except ImportError as e:
-    logger.warning(f"Agno not available: {e}")
-    AGNO_AVAILABLE = False
+    AGNO_ERROR = f"Import error: {str(e)}"
+    logger.error(f"Agno import failed: {e}", exc_info=True)
+except Exception as e:
+    AGNO_ERROR = f"Unexpected error: {str(e)}"
+    logger.error(f"Agno initialization error: {e}", exc_info=True)
 
 
 class AgnoAgent:
@@ -41,7 +56,11 @@ class AgnoAgent:
     def __init__(self):
         """Initialize Agno agent with Jira tools."""
         if not AGNO_AVAILABLE:
-            raise ImportError("Agno framework not installed. Run: pip install agno")
+            error_msg = "Agno framework not available."
+            if AGNO_ERROR:
+                error_msg += f" Error: {AGNO_ERROR}"
+            error_msg += " Run: pip install agno (in your virtual environment)"
+            raise ImportError(error_msg)
         
         project_id = os.getenv("GCP_PROJECT_ID", "continuum-ai-482615")
         location = os.getenv("GCP_LOCATION", "global")
