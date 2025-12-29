@@ -64,22 +64,55 @@ async def process_trigger(event: TriggerEvent, mismatch: Optional[ContextMismatc
 
 
 async def _get_task_context(event: TriggerEvent):
-    """Get task context from event data."""
+    """Get task context from event data with full details."""
     event_data = event.event_data
     task_type = event_data.get("task_type")
     task_key = event_data.get("task_key")
+    metadata = event_data.get("metadata", {})
     
     try:
         if task_type == "pr_review":
             pr_number = int(task_key)
             from app.tools.github import get_pr_context
             pr_data = await get_pr_context(pr_number)
-            return extract_task_context_from_pr(pr_data)
+            
+            # Enhance metadata with full PR context
+            if metadata:
+                metadata.update({
+                    "pr_data": pr_data.get("pr", {}),
+                    "ci_status": pr_data.get("ci_status", ""),
+                    "approval_count": pr_data.get("approval_count", 0),
+                    "changes_requested": pr_data.get("changes_requested", False)
+                })
+            
+            task_context = extract_task_context_from_pr(pr_data)
+            # Attach enhanced metadata
+            if hasattr(task_context, 'metadata'):
+                task_context.metadata.update(metadata)
+            else:
+                task_context.metadata = metadata
+            
+            return task_context
         
         elif task_type == "issue_work":
             from app.tools.jira import get_single_issue
             issue = await get_single_issue(task_key)
-            return extract_task_context_from_jira(issue.model_dump())
+            issue_dict = issue.model_dump()
+            
+            # Enhance metadata with full issue context
+            if metadata:
+                metadata.update({
+                    "issue_data": issue_dict
+                })
+            
+            task_context = extract_task_context_from_jira(issue_dict)
+            # Attach enhanced metadata
+            if hasattr(task_context, 'metadata'):
+                task_context.metadata.update(metadata)
+            else:
+                task_context.metadata = metadata
+            
+            return task_context
         
     except Exception as e:
         logger.error(f"Error getting task context: {e}", exc_info=True)
@@ -225,7 +258,7 @@ async def _execute_notify(task_context, decision, event: TriggerEvent, mismatch:
         payload = {
             "channel": channel,
             "text": message,
-            "blocks": _build_slack_blocks(task_context, decision, mismatch)
+            "blocks": _build_slack_blocks(task_context, decision, mismatch, event)
         }
         
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -267,44 +300,166 @@ def _build_notification_message(task_context, decision, mismatch: Optional[Conte
     return "\n".join(lines)
 
 
-def _build_slack_blocks(task_context, decision, mismatch: Optional[ContextMismatch]) -> list[dict]:
-    """Build Slack Block Kit blocks for rich formatting."""
-    blocks = [
-        {
-            "type": "header",
-            "text": {
-                "type": "plain_text",
-                "text": f"📋 Task Update: {task_context.task_id}"
-            }
-        },
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": f"*{task_context.title}*"
-            }
-        },
-        {
-            "type": "section",
-            "fields": [
-                {
-                    "type": "mrkdwn",
-                    "text": f"*Decision:*\n{decision.action.value.upper()}"
-                },
-                {
-                    "type": "mrkdwn",
-                    "text": f"*Criticality:*\n{decision.criticality_score:.1f}"
-                }
-            ]
-        },
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": f"*Why:* {decision.reasoning}"
-            }
+def _build_slack_blocks(task_context, decision, mismatch: Optional[ContextMismatch], event: Optional[TriggerEvent] = None) -> list[dict]:
+    """Build Slack Block Kit blocks for rich formatting with context."""
+    blocks = []
+    
+    # Get change details from event if available
+    change_details = None
+    metadata = task_context.metadata if hasattr(task_context, 'metadata') else {}
+    if event and event.event_data.get("change_details"):
+        change_details = event.event_data.get("change_details")
+        metadata = event.event_data.get("metadata", {})
+    
+    # Header with emoji based on task type
+    emoji = "🔀" if task_context.task_type == "pr" else "📋"
+    blocks.append({
+        "type": "header",
+        "text": {
+            "type": "plain_text",
+            "text": f"{emoji} Task Update: {task_context.task_id}"
         }
-    ]
+    })
+    
+    # Title
+    blocks.append({
+        "type": "section",
+        "text": {
+            "type": "mrkdwn",
+            "text": f"*{task_context.title}*"
+        }
+    })
+    
+    # What changed section (if webhook event)
+    if change_details:
+        change_desc = change_details.get("description", change_details.get("action", "Updated"))
+        changed_by = change_details.get("changed_by", "unknown")
+        
+        blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"🔄 *What Changed:*\n{change_desc}\n*Changed by:* {changed_by}"
+            }
+        })
+        blocks.append({"type": "divider"})
+    
+    # Task details section
+    detail_fields = []
+    
+    if task_context.task_type == "pr":
+        # PR-specific details
+        pr_state = metadata.get("pr_state", "")
+        pr_draft = metadata.get("pr_draft", False)
+        pr_assignees = metadata.get("pr_assignees", [])
+        pr_reviewers = metadata.get("pr_reviewers", [])
+        pr_labels = metadata.get("pr_labels", [])
+        pr_changed_files = metadata.get("pr_changed_files", 0)
+        pr_additions = metadata.get("pr_additions", 0)
+        pr_deletions = metadata.get("pr_deletions", 0)
+        
+        state_text = f"{'📝 Draft' if pr_draft else '✅'} {pr_state.upper()}"
+        detail_fields.append({
+            "type": "mrkdwn",
+            "text": f"*Status:*\n{state_text}"
+        })
+        
+        if pr_assignees:
+            detail_fields.append({
+                "type": "mrkdwn",
+                "text": f"*Assigned to:*\n{', '.join(pr_assignees)}"
+            })
+        
+        if pr_reviewers:
+            detail_fields.append({
+                "type": "mrkdwn",
+                "text": f"*Reviewers:*\n{', '.join(pr_reviewers)}"
+            })
+        
+        if pr_labels:
+            detail_fields.append({
+                "type": "mrkdwn",
+                "text": f"*Labels:*\n{', '.join(pr_labels)}"
+            })
+        
+        if pr_changed_files > 0:
+            detail_fields.append({
+                "type": "mrkdwn",
+                "text": f"*Changes:*\n{pr_changed_files} files (+{pr_additions}/-{pr_deletions})"
+            })
+    
+    elif task_context.task_type == "jira_issue":
+        # Jira issue-specific details
+        issue_status = metadata.get("issue_status", "")
+        issue_priority = metadata.get("issue_priority", "")
+        issue_assignee = metadata.get("issue_assignee", "")
+        issue_labels = metadata.get("issue_labels", [])
+        issue_due_time = metadata.get("issue_due_time", "")
+        
+        detail_fields.append({
+            "type": "mrkdwn",
+            "text": f"*Status:*\n{issue_status}"
+        })
+        
+        if issue_priority:
+            detail_fields.append({
+                "type": "mrkdwn",
+                "text": f"*Priority:*\n{issue_priority}"
+            })
+        
+        if issue_assignee:
+            detail_fields.append({
+                "type": "mrkdwn",
+                "text": f"*Assigned to:*\n{issue_assignee}"
+            })
+        
+        if issue_labels:
+            detail_fields.append({
+                "type": "mrkdwn",
+                "text": f"*Labels:*\n{', '.join(issue_labels)}"
+            })
+        
+        if issue_due_time:
+            detail_fields.append({
+                "type": "mrkdwn",
+                "text": f"*Due Time:*\n{issue_due_time}"
+            })
+    
+    if detail_fields:
+        blocks.append({
+            "type": "section",
+            "fields": detail_fields[:4]  # Max 4 fields per section
+        })
+        if len(detail_fields) > 4:
+            blocks.append({
+                "type": "section",
+                "fields": detail_fields[4:]
+            })
+    
+    blocks.append({"type": "divider"})
+    
+    # Decision section
+    blocks.append({
+        "type": "section",
+        "fields": [
+            {
+                "type": "mrkdwn",
+                "text": f"*Decision:*\n{decision.action.value.upper()}"
+            },
+            {
+                "type": "mrkdwn",
+                "text": f"*Criticality:*\n{decision.criticality_score:.1f}"
+            }
+        ]
+    })
+    
+    blocks.append({
+        "type": "section",
+        "text": {
+            "type": "mrkdwn",
+            "text": f"💡 *Why:* {decision.reasoning}"
+        }
+    })
     
     if mismatch:
         blocks.append({
@@ -315,27 +470,44 @@ def _build_slack_blocks(task_context, decision, mismatch: Optional[ContextMismat
             }
         })
     
-    # Add task URL if available
+    # Action buttons
+    action_blocks = []
+    
     if task_context.task_type == "pr":
-        pr_url = task_context.metadata.get("pr_data", {}).get("pr", {}).get("html_url")
+        pr_url = metadata.get("pr_url", "")
         if pr_url:
-            blocks.append({
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": f"<{pr_url}|View PR>"
-                }
+            action_blocks.append({
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {
+                            "type": "plain_text",
+                            "text": "View PR"
+                        },
+                        "url": pr_url,
+                        "style": "primary"
+                    }
+                ]
             })
     elif task_context.task_type == "jira_issue":
-        jira_url = f"https://continuum-ai.atlassian.net/browse/{task_context.task_id}"
-        blocks.append({
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": f"<{jira_url}|View Issue>"
-            }
+        jira_url = metadata.get("issue_url", f"https://continuum-ai.atlassian.net/browse/{task_context.task_id}")
+        action_blocks.append({
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {
+                        "type": "plain_text",
+                        "text": "View Issue"
+                    },
+                    "url": jira_url,
+                    "style": "primary"
+                }
+            ]
         })
     
+    blocks.extend(action_blocks)
     blocks.append({"type": "divider"})
     
     return blocks
