@@ -12,6 +12,7 @@ import logging
 from collections import defaultdict
 from pathlib import Path
 from typing import Optional
+from datetime import datetime
 
 # Add project root to path
 project_root = Path(__file__).resolve().parent.parent.parent
@@ -560,7 +561,109 @@ Do not include any markdown, code blocks, or text outside the JSON object."""
         
         return results
     
-    async def format_response(self, user_message: str, tool_results: list[dict], intent: dict) -> str:
+    async def _check_user_availability(self) -> bool:
+        """Check if user is currently available based on calendar."""
+        try:
+            from app.tools.calendar import get_today_events
+            events = await get_today_events()
+            now = datetime.now()
+            
+            # Check if user is in a meeting right now
+            for event in events:
+                start = event.get('start') or event.get('start_time', '')
+                end = event.get('end') or event.get('end_time', '')
+                if start and end:
+                    try:
+                        start_dt = datetime.fromisoformat(start.replace('Z', '+00:00'))
+                        end_dt = datetime.fromisoformat(end.replace('Z', '+00:00'))
+                        if start_dt <= now <= end_dt:
+                            logger.info(f"User is in meeting: {event.get('summary')}")
+                            return False
+                    except (ValueError, AttributeError):
+                        pass
+            
+            return True
+        except Exception as e:
+            logger.warning(f"Could not check availability: {e}")
+            return True  # Default to available if check fails
+    
+    async def _apply_policy_engine(self, tool_results: list[dict], user_message: str) -> list[dict]:
+        """
+        Apply policy engine to tool results for decision intelligence.
+        
+        Returns list of decision traces for PRs and Jira issues.
+        """
+        decision_traces = []
+        
+        try:
+            from app.policy.scoring import (
+                extract_task_context_from_pr,
+                extract_task_context_from_jira
+            )
+            from app.policy.decision import decide_action
+            
+            # Check user availability
+            user_available = await self._check_user_availability()
+            
+            for result in tool_results:
+                if not result.get("success"):
+                    continue
+                
+                data = result["data"]
+                tool_name = result.get("tool", "")
+                
+                # Process PR context
+                if tool_name == "get_github_pr_context" and isinstance(data, dict):
+                    try:
+                        context = extract_task_context_from_pr(data)
+                        decision = decide_action(context, user_available, automation_enabled=False)
+                        decision_traces.append({
+                            "task_type": "pr",
+                            "task_id": context.task_id,
+                            "decision": decision.model_dump()
+                        })
+                        logger.info(f"Policy decision for PR {context.task_id}: {decision.action.value} (CS: {decision.criticality_score:.1f}, AFS: {decision.automation_feasibility_score:.1f})")
+                    except Exception as e:
+                        logger.error(f"Policy engine error for PR: {e}", exc_info=True)
+                
+                # Process single Jira issue
+                elif tool_name == "get_jira_issue" and isinstance(data, dict):
+                    try:
+                        context = extract_task_context_from_jira(data)
+                        decision = decide_action(context, user_available, automation_enabled=False)
+                        decision_traces.append({
+                            "task_type": "jira_issue",
+                            "task_id": context.task_id,
+                            "decision": decision.model_dump()
+                        })
+                        logger.info(f"Policy decision for issue {context.task_id}: {decision.action.value} (CS: {decision.criticality_score:.1f})")
+                    except Exception as e:
+                        logger.error(f"Policy engine error for Jira issue: {e}", exc_info=True)
+                
+                # Process list of Jira issues (take first one for now)
+                elif tool_name in ["get_jira_board_issues", "get_jira_issues"] and isinstance(data, list) and data:
+                    try:
+                        # Process first issue as example
+                        issue = data[0]
+                        context = extract_task_context_from_jira(issue)
+                        decision = decide_action(context, user_available, automation_enabled=False)
+                        decision_traces.append({
+                            "task_type": "jira_issue",
+                            "task_id": context.task_id,
+                            "decision": decision.model_dump()
+                        })
+                        logger.info(f"Policy decision for issue {context.task_id}: {decision.action.value} (CS: {decision.criticality_score:.1f})")
+                    except Exception as e:
+                        logger.error(f"Policy engine error for Jira issues: {e}", exc_info=True)
+        
+        except ImportError as e:
+            logger.warning(f"Policy engine not available: {e}")
+        except Exception as e:
+            logger.error(f"Error applying policy engine: {e}", exc_info=True)
+        
+        return decision_traces
+    
+    async def format_response(self, user_message: str, tool_results: list[dict], intent: dict, decision_traces: Optional[list[dict]] = None) -> str:
         """
         Format tool results into a human-friendly response using Gemini.
         
@@ -602,12 +705,24 @@ Do not include any markdown, code blocks, or text outside the JSON object."""
             else:
                 results_detail.append(f"{result['tool']}: ERROR - {result['error']}")
         
+        # Add decision traces to prompt if available
+        decision_info = ""
+        if decision_traces:
+            decision_info = "\n\nDecision Intelligence:\n"
+            for trace in decision_traces:
+                decision = trace.get("decision", {})
+                decision_info += f"- {trace.get('task_type')} {trace.get('task_id')}: "
+                decision_info += f"Action: {decision.get('action')}, "
+                decision_info += f"CS: {decision.get('criticality_score', 0):.1f}, "
+                decision_info += f"AFS: {decision.get('automation_feasibility_score', 0):.1f}, "
+                decision_info += f"Reasoning: {decision.get('reasoning', 'N/A')}\n"
+        
         prompt = f"""User asked: "{user_message}"
 
 I called these tools: {intent.get('reasoning', 'N/A')}
 
 Tool Results:
-{chr(10).join(results_detail)}
+{chr(10).join(results_detail)}{decision_info}
 
 Format this data for Slack messaging. Use Slack-friendly formatting:
 - Use *bold* for emphasis (not **double asterisks**)
@@ -625,6 +740,11 @@ CRITICAL RULES:
 4. For PRs: Show number, title, status, CI status clearly
 5. Use blank lines to separate sections for better readability
 6. Keep each line concise - Slack messages should be scannable
+7. If Decision Intelligence is provided, include it at the end with a "💡 Decision" section showing:
+   - Recommended action (Execute/Delegate/Summarize/Reschedule/Automate)
+   - Criticality Score (CS) and Automation Feasibility Score (AFS)
+   - Reasoning: why this action was chosen
+   - Format: "💡 *Decision for [task]*: [action] | CS: [score] | AFS: [score] | *Why*: [reasoning]"
 
 Format example for calendar events:
 📅 *Events for [Date]*
@@ -652,9 +772,9 @@ Now format the data accordingly:"""
         except Exception as e:
             logger.error(f"Response formatting failed: {e}", exc_info=True)
             # Fallback formatting
-            return self._fallback_formatting(tool_results)
+            return self._fallback_formatting(tool_results, decision_traces)
     
-    def _fallback_formatting(self, tool_results: list[dict]) -> str:
+    def _fallback_formatting(self, tool_results: list[dict], decision_traces: Optional[list[dict]] = None) -> str:
         """Simple fallback formatting optimized for Slack."""
         lines = []
         for result in tool_results:
@@ -717,6 +837,21 @@ Now format the data accordingly:"""
             else:
                 lines.append(f"❌ *Error:* {result['error']}")
         
+        # Add decision traces if available
+        if decision_traces:
+            lines.append("\n💡 *Decision Intelligence:*")
+            for trace in decision_traces:
+                decision = trace.get("decision", {})
+                task_id = trace.get("task_id", "unknown")
+                action = decision.get("action", "unknown")
+                cs = decision.get("criticality_score", 0)
+                afs = decision.get("automation_feasibility_score", 0)
+                reasoning = decision.get("reasoning", "N/A")
+                
+                lines.append(f"• *{task_id}*: {action.upper()}")
+                lines.append(f"  CS: {cs:.1f} | AFS: {afs:.1f}")
+                lines.append(f"  *Why*: {reasoning}")
+        
         return "\n".join(lines) if lines else "No results found."
     
     async def chat(self, user_message: str) -> str:
@@ -745,8 +880,13 @@ Now format the data accordingly:"""
         else:
             logger.warning("No tools selected by intent parser")
         
-        # Format response
-        response = await self.format_response(user_message, tool_results, intent)
+        # Apply policy engine for decision intelligence (if applicable)
+        decision_traces = []
+        if tool_results:
+            decision_traces = await self._apply_policy_engine(tool_results, user_message)
+        
+        # Format response (include decision traces if available)
+        response = await self.format_response(user_message, tool_results, intent, decision_traces)
         
         # Add to history
         self.conversation_history.append({"role": "assistant", "content": response})
