@@ -10,4 +10,5 @@ google-auth-oauthlib
 sqlalchemy
 streamlit
 uvicorn
+agno
 
