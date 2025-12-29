@@ -39,38 +39,94 @@ async def get_github_pulls_tool(state: str = "open", owner: Optional[str] = None
 
 
 async def get_github_pull_tool(pr_number: int, owner: Optional[str] = None, repo: Optional[str] = None) -> dict:
-    """Get details of a specific PR by number. Returns PR details including title, state, size, branches, etc."""
+    """Get details of a specific PR by number. Returns PR details including title, state, size, branches, etc. If owner/repo not provided, uses default from GITHUB_OWNER and GITHUB_REPO env vars."""
     try:
+        # If owner/repo not provided, use default from env
+        if not owner or not repo:
+            import os
+            owner = owner or os.getenv("GITHUB_OWNER")
+            repo = repo or os.getenv("GITHUB_REPO")
+            if not owner or not repo:
+                return {
+                    "success": False,
+                    "error": f"Repository not specified and GITHUB_OWNER/GITHUB_REPO not set. Please specify owner and repo for PR #{pr_number}, or set GITHUB_OWNER and GITHUB_REPO in .env"
+                }
+        
         pr = await get_pull_request(pr_number, owner=owner, repo=repo)
         return {"success": True, "pull": pr.model_dump()}
     except Exception as e:
+        error_msg = str(e)
+        # Include repo info in error if available
+        if owner and repo:
+            error_msg = f"PR #{pr_number} not found in {owner}/{repo}. {error_msg}"
         logger.error(f"Error getting GitHub PR {pr_number}: {e}", exc_info=True)
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": error_msg}
 
 
 async def get_github_pr_context_tool(pr_number: int, owner: Optional[str] = None, repo: Optional[str] = None) -> dict:
-    """Get comprehensive PR context including CI status, reviews, and approvals. Returns full context for decision-making."""
+    """Get comprehensive PR context including CI status, reviews, and approvals. Returns full context for decision-making. If owner/repo not provided, uses default from GITHUB_OWNER and GITHUB_REPO env vars."""
     try:
+        # If owner/repo not provided, use default from env
+        if not owner or not repo:
+            import os
+            owner = owner or os.getenv("GITHUB_OWNER")
+            repo = repo or os.getenv("GITHUB_REPO")
+            if not owner or not repo:
+                return {
+                    "success": False,
+                    "error": f"Repository not specified and GITHUB_OWNER/GITHUB_REPO not set. Please specify owner and repo for PR #{pr_number}, or set GITHUB_OWNER and GITHUB_REPO in .env"
+                }
+        
         context = await get_pr_context(pr_number, owner=owner, repo=repo)
         return {"success": True, **context}
     except Exception as e:
+        error_msg = str(e)
+        # Include repo info in error if available
+        if owner and repo:
+            error_msg = f"PR #{pr_number} not found in {owner}/{repo}. {error_msg}"
         logger.error(f"Error getting GitHub PR context {pr_number}: {e}", exc_info=True)
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": error_msg}
 
 
 async def get_github_pr_checks_tool(pr_number: int, owner: Optional[str] = None, repo: Optional[str] = None) -> dict:
-    """Get CI/CD check status for a PR. Returns check runs and overall conclusion."""
+    """Get CI/CD check status for a PR. Returns check runs and overall conclusion. If owner/repo not provided, uses default from GITHUB_OWNER and GITHUB_REPO env vars."""
     try:
+        # If owner/repo not provided, use default from env
+        if not owner or not repo:
+            import os
+            owner = owner or os.getenv("GITHUB_OWNER")
+            repo = repo or os.getenv("GITHUB_REPO")
+            if not owner or not repo:
+                return {
+                    "success": False,
+                    "error": f"Repository not specified and GITHUB_OWNER/GITHUB_REPO not set. Please specify owner and repo for PR #{pr_number}, or set GITHUB_OWNER and GITHUB_REPO in .env"
+                }
+        
         checks = await get_pr_checks(pr_number, owner=owner, repo=repo)
         return {"success": True, "checks": checks.model_dump()}
     except Exception as e:
+        error_msg = str(e)
+        # Include repo info in error if available
+        if owner and repo:
+            error_msg = f"PR #{pr_number} not found in {owner}/{repo}. {error_msg}"
         logger.error(f"Error getting GitHub PR checks {pr_number}: {e}", exc_info=True)
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": error_msg}
 
 
 async def get_github_pr_reviews_tool(pr_number: int, owner: Optional[str] = None, repo: Optional[str] = None) -> dict:
-    """Get reviews for a PR. Returns list of reviews with user, state, and timestamp."""
+    """Get reviews for a PR. Returns list of reviews with user, state, and timestamp. If owner/repo not provided, uses default from GITHUB_OWNER and GITHUB_REPO env vars."""
     try:
+        # If owner/repo not provided, use default from env
+        if not owner or not repo:
+            import os
+            owner = owner or os.getenv("GITHUB_OWNER")
+            repo = repo or os.getenv("GITHUB_REPO")
+            if not owner or not repo:
+                return {
+                    "success": False,
+                    "error": f"Repository not specified and GITHUB_OWNER/GITHUB_REPO not set. Please specify owner and repo for PR #{pr_number}, or set GITHUB_OWNER and GITHUB_REPO in .env"
+                }
+        
         reviews = await get_pr_reviews(pr_number, owner=owner, repo=repo)
         return {
             "success": True,
@@ -78,8 +134,12 @@ async def get_github_pr_reviews_tool(pr_number: int, owner: Optional[str] = None
             "reviews": [review.model_dump() for review in reviews]
         }
     except Exception as e:
+        error_msg = str(e)
+        # Include repo info in error if available
+        if owner and repo:
+            error_msg = f"PR #{pr_number} not found in {owner}/{repo}. {error_msg}"
         logger.error(f"Error getting GitHub PR reviews {pr_number}: {e}", exc_info=True)
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": error_msg}
 
 
 async def get_github_commits_tool(
@@ -171,8 +231,19 @@ async def update_github_pr_assignees_tool(
     owner: Optional[str] = None,
     repo: Optional[str] = None
 ) -> dict:
-    """Add or remove assignees from a PR. Provide list of GitHub usernames to add or remove."""
+    """Add or remove assignees from a PR. Provide list of GitHub usernames to add or remove. If owner/repo not provided, uses default from GITHUB_OWNER and GITHUB_REPO env vars."""
     try:
+        # If owner/repo not provided, use default from env
+        if not owner or not repo:
+            import os
+            owner = owner or os.getenv("GITHUB_OWNER")
+            repo = repo or os.getenv("GITHUB_REPO")
+            if not owner or not repo:
+                return {
+                    "success": False,
+                    "error": "Repository not specified and GITHUB_OWNER/GITHUB_REPO not set in environment. Please specify owner and repo, or set them in .env"
+                }
+        
         result = await update_pr_assignees(
             pr_number=pr_number,
             assignees=assignees,
@@ -182,8 +253,12 @@ async def update_github_pr_assignees_tool(
         )
         return {"success": True, **result}
     except Exception as e:
+        error_msg = str(e)
+        # Include repo info in error if available
+        if owner and repo:
+            error_msg = f"Error updating PR #{pr_number} in {owner}/{repo}: {error_msg}"
         logger.error(f"Error updating GitHub PR assignees {pr_number}: {e}", exc_info=True)
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": error_msg}
 
 
 async def update_github_pr_labels_tool(
@@ -193,8 +268,19 @@ async def update_github_pr_labels_tool(
     owner: Optional[str] = None,
     repo: Optional[str] = None
 ) -> dict:
-    """Add or remove labels from a PR. Provide list of label names to add or remove."""
+    """Add or remove labels from a PR. Provide list of label names to add or remove. If owner/repo not provided, uses default from GITHUB_OWNER and GITHUB_REPO env vars."""
     try:
+        # If owner/repo not provided, use default from env
+        if not owner or not repo:
+            import os
+            owner = owner or os.getenv("GITHUB_OWNER")
+            repo = repo or os.getenv("GITHUB_REPO")
+            if not owner or not repo:
+                return {
+                    "success": False,
+                    "error": f"Repository not specified and GITHUB_OWNER/GITHUB_REPO not set. Please specify owner and repo for PR #{pr_number}, or set GITHUB_OWNER and GITHUB_REPO in .env"
+                }
+        
         result = await update_pr_labels(
             pr_number=pr_number,
             labels=labels,
@@ -204,8 +290,12 @@ async def update_github_pr_labels_tool(
         )
         return {"success": True, **result}
     except Exception as e:
+        error_msg = str(e)
+        # Include repo info in error if available
+        if owner and repo:
+            error_msg = f"Error updating PR #{pr_number} in {owner}/{repo}: {error_msg}"
         logger.error(f"Error updating GitHub PR labels {pr_number}: {e}", exc_info=True)
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": error_msg}
 
 
 async def request_github_pr_review_tool(
@@ -215,8 +305,19 @@ async def request_github_pr_review_tool(
     owner: Optional[str] = None,
     repo: Optional[str] = None
 ) -> dict:
-    """Request review from specific users or teams for a PR. Provide list of GitHub usernames or team slugs."""
+    """Request review from specific users or teams for a PR. Provide list of GitHub usernames or team slugs. If owner/repo not provided, uses default from GITHUB_OWNER and GITHUB_REPO env vars."""
     try:
+        # If owner/repo not provided, use default from env
+        if not owner or not repo:
+            import os
+            owner = owner or os.getenv("GITHUB_OWNER")
+            repo = repo or os.getenv("GITHUB_REPO")
+            if not owner or not repo:
+                return {
+                    "success": False,
+                    "error": f"Repository not specified and GITHUB_OWNER/GITHUB_REPO not set. Please specify owner and repo for PR #{pr_number}, or set GITHUB_OWNER and GITHUB_REPO in .env"
+                }
+        
         result = await request_pr_review(
             pr_number=pr_number,
             reviewers=reviewers,
@@ -226,6 +327,10 @@ async def request_github_pr_review_tool(
         )
         return {"success": True, **result}
     except Exception as e:
+        error_msg = str(e)
+        # Include repo info in error if available
+        if owner and repo:
+            error_msg = f"Error requesting review for PR #{pr_number} in {owner}/{repo}: {error_msg}"
         logger.error(f"Error requesting GitHub PR review {pr_number}: {e}", exc_info=True)
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": error_msg}
 
