@@ -44,7 +44,7 @@ from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import httpx
 from app.agent.conversation import ConversationalAgent
-from app.agno_agent import AgnoAgent, is_jira_request, is_github_request
+from app.agno_agent import AgnoAgent, should_use_agno
 
 
 @asynccontextmanager
@@ -256,11 +256,10 @@ async def slack_events(request: Request):
             try:
                 logger.info(f"Processing message with agent: {user_message}")
                 
-                # Check if this is a Jira or GitHub request and route to Agno
-                if is_jira_request(user_message) or is_github_request(user_message):
+                # Check if this should be handled by Agno (Jira, GitHub, Calendar, or multi-tool)
+                if should_use_agno(user_message):
                     try:
-                        request_type = "Jira" if is_jira_request(user_message) else "GitHub"
-                        logger.info(f"Routing to Agno agent ({request_type} request)")
+                        logger.info("Routing to Agno agent (Jira/GitHub/Calendar/multi-tool request)")
                         agno_instance = get_agno_agent()
                         response = await agno_instance.run(user_message)
                         logger.info(f"Agno agent response: {response[:100]}...")
@@ -271,7 +270,7 @@ async def slack_events(request: Request):
                         response = await agent_instance.chat(user_message)
                         logger.info(f"Fallback agent response: {response[:100]}...")
                 else:
-                    # Use regular agent for non-Jira/GitHub requests (Calendar, etc.)
+                    # Use regular agent for other requests
                     agent_instance = get_agent()
                     response = await agent_instance.chat(user_message)
                     logger.info(f"Agent response: {response[:100]}...")
@@ -308,8 +307,8 @@ async def slack_commands(request: Request):
         })
     
     try:
-        # Process with agent - route Jira/GitHub requests to Agno
-        if is_jira_request(user_message) or is_github_request(user_message):
+        # Process with agent - route Jira/GitHub/Calendar/multi-tool requests to Agno
+        if should_use_agno(user_message):
             try:
                 agno_instance = get_agno_agent()
                 response = await agno_instance.run(user_message)
