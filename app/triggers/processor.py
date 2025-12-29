@@ -14,7 +14,7 @@ from app.policy.scoring import (
     extract_task_context_from_pr,
     extract_task_context_from_jira
 )
-from app.policy.decision import PolicyEngine
+from app.policy.decision import decide_action
 from app.delegation.selector import select_teammate
 from app.delegation.notifier import notify_teammate, DelegationNotification
 
@@ -43,8 +43,7 @@ async def process_trigger(event: TriggerEvent, mismatch: Optional[ContextMismatc
         user_available = await _check_user_availability(event.event_data.get("user_id"))
         
         # Apply policy engine
-        policy_engine = PolicyEngine()
-        decision = policy_engine.make_decision(task_context, user_available, automation_enabled=False)
+        decision = decide_action(task_context, user_available, automation_enabled=False)
         
         logger.info(f"Policy decision: {decision.action.value} (CS: {decision.criticality_score:.1f})")
         

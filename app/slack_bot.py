@@ -41,21 +41,15 @@ else:
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
+from contextlib import asynccontextmanager
 import httpx
 from app.agent.conversation import ConversationalAgent
 
-app = FastAPI(title="continuum.ai Slack Bot")
 
-# Initialize agent (lazy initialization)
-agent: Optional[ConversationalAgent] = None
-
-# Event deduplication: track processed events
-processed_events = set()
-
-# Start trigger system scheduler on startup
-@app.on_event("startup")
-async def startup_event():
-    """Start background services on app startup."""
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager for startup and shutdown events."""
+    # Startup
     try:
         import asyncio
         from app.triggers.scheduler import start_scheduler
@@ -69,17 +63,25 @@ async def startup_event():
         logger.info("Trigger system scheduler starting...")
     except Exception as e:
         logger.warning(f"Could not start trigger scheduler: {e}")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Stop background services on app shutdown."""
+    
+    yield
+    
+    # Shutdown
     try:
         from app.triggers.scheduler import stop_scheduler
         stop_scheduler()
         logger.info("Trigger system scheduler stopped")
     except Exception as e:
         logger.warning(f"Error stopping trigger scheduler: {e}")
+
+
+app = FastAPI(title="continuum.ai Slack Bot", lifespan=lifespan)
+
+# Initialize agent (lazy initialization)
+agent: Optional[ConversationalAgent] = None
+
+# Event deduplication: track processed events
+processed_events = set()
 
 
 def get_agent() -> ConversationalAgent:
