@@ -58,6 +58,17 @@ try:
         request_github_pr_review_tool
     )
     logger.info("Successfully imported all GitHub tools")
+    
+    logger.info("Attempting to import Calendar tools...")
+    from app.agno_tools.calendar_tools import (
+        list_calendars_tool,
+        get_calendar_events_tool,
+        get_calendar_availability_tool,
+        get_today_events_tool,
+        get_this_week_availability_tool,
+        create_calendar_event_tool
+    )
+    logger.info("Successfully imported all Calendar tools")
     AGNO_AVAILABLE = True
 except ImportError as e:
     AGNO_ERROR = f"Import error: {str(e)}"
@@ -68,10 +79,10 @@ except Exception as e:
 
 
 class AgnoAgent:
-    """Agno-based agent for handling Jira and GitHub operations with reasoning."""
+    """Agno-based agent for handling Jira, GitHub, and Calendar operations with reasoning."""
     
     def __init__(self):
-        """Initialize Agno agent with Jira and GitHub tools."""
+        """Initialize Agno agent with Jira, GitHub, and Calendar tools."""
         if not AGNO_AVAILABLE:
             error_msg = "Agno framework not available."
             if AGNO_ERROR:
@@ -90,7 +101,7 @@ class AgnoAgent:
             location=location
         )
         
-        # Create agent with Jira and GitHub tools (as functions)
+        # Create agent with Jira, GitHub, and Calendar tools (as functions)
         self.agent = Agent(
             model=model,
             tools=[
@@ -115,10 +126,17 @@ class AgnoAgent:
                 update_github_pr_tool,
                 update_github_pr_assignees_tool,
                 update_github_pr_labels_tool,
-                request_github_pr_review_tool
+                request_github_pr_review_tool,
+                # Calendar tools
+                list_calendars_tool,
+                get_calendar_events_tool,
+                get_calendar_availability_tool,
+                get_today_events_tool,
+                get_this_week_availability_tool,
+                create_calendar_event_tool
             ],
             markdown=True,
-            instructions="""You are continuum.ai, a context-aware AI productivity agent for Jira and GitHub task management.
+            instructions="""You are continuum.ai, a context-aware AI productivity agent for Jira, GitHub, and Calendar task management.
 
 CRITICAL: Use Slack formatting, NOT Markdown:
 - Use *single asterisk* for bold (NOT **double asterisks**)
@@ -127,11 +145,24 @@ CRITICAL: Use Slack formatting, NOT Markdown:
 - Use emojis for status indicators
 - NEVER use ** for bold - Slack doesn't support it
 
+MULTI-TOOL ORCHESTRATION:
+You can execute multiple tools in sequence to complete complex workflows. For example:
+- "Check avyukt's availability, assign PR #2 to him, create a Jira issue with him assigned, and add it to his calendar"
+- Break down the request into steps: 1) Check availability, 2) Assign PR, 3) Create Jira issue, 4) Create calendar event
+- Use results from previous tools to inform next steps (e.g., use free time slots to schedule calendar events)
+- Link related items (e.g., include PR URL in Jira issue description, mention Jira issue in calendar event)
+
 IMPORTANT FOR GITHUB OPERATIONS:
 - When owner/repo are not specified in the user's request, use the default repository from GITHUB_OWNER and GITHUB_REPO environment variables
 - Do NOT guess or infer repository names from context unless explicitly mentioned
 - If a PR operation fails, clearly state which repository you tried (e.g., "PR #2 not found in owner/repo")
 - For assign operations, you can use update_github_pr_assignees_tool with just the PR number if the default repo is configured
+
+IMPORTANT FOR CALENDAR OPERATIONS:
+- When checking availability for a specific person, use their email as calendar_id (for service accounts) or "primary" (for OAuth)
+- When creating events, use ISO format dates (e.g., '2026-01-01T10:00:00Z')
+- For multi-step workflows involving calendar, check availability first, then create events in free slots
+- Include relevant context in event descriptions (e.g., PR numbers, Jira issue keys)
 
 When responding to users in Slack:
 - Structure responses clearly with headers and sections
@@ -153,7 +184,7 @@ Examples of CORRECT Slack formatting:
 REMEMBER: Use *single asterisk* for bold, never **double asterisks**. Always format responses for Slack readability."""
         )
         
-        logger.info("Agno agent initialized successfully with Jira and GitHub tools")
+        logger.info("Agno agent initialized successfully with Jira, GitHub, and Calendar tools")
     
     async def run(self, message: str) -> str:
         """
@@ -251,3 +282,43 @@ def is_github_request(message: str) -> bool:
         return True
     
     return False
+
+
+def is_calendar_request(message: str) -> bool:
+    """
+    Determine if a message is a Calendar-related request.
+    
+    Args:
+        message: User message
+        
+    Returns:
+        True if message appears to be Calendar-related
+    """
+    message_lower = message.lower()
+    
+    # Calendar keywords
+    calendar_keywords = [
+        "calendar", "availability", "free", "schedule", "meeting",
+        "event", "appointment", "busy", "slot", "time slot"
+    ]
+    
+    # Check for keywords
+    if any(keyword in message_lower for keyword in calendar_keywords):
+        return True
+    
+    return False
+
+
+def should_use_agno(message: str) -> bool:
+    """
+    Determine if a message should be handled by Agno agent.
+    
+    Agno handles: Jira, GitHub, Calendar, and multi-tool orchestration.
+    
+    Args:
+        message: User message
+        
+    Returns:
+        True if message should be routed to Agno
+    """
+    return is_jira_request(message) or is_github_request(message) or is_calendar_request(message)
