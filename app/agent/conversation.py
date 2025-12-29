@@ -12,7 +12,7 @@ import logging
 from collections import defaultdict
 from pathlib import Path
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Add project root to path
 project_root = Path(__file__).resolve().parent.parent.parent
@@ -212,6 +212,88 @@ Response: {{"tools": [{{"name": "get_github_pr_context", "params": {{"pr_number"
 User: "what's the status of PROJ-123"
 Response: {{"tools": [{{"name": "get_jira_issue", "params": {{"issue_key": "PROJ-123"}}}}], "reasoning": "User wants details of Jira issue PROJ-123"}}
 """
+    
+    def _normalize_date(self, date_str: str) -> Optional[str]:
+        """
+        Normalize date strings to ISO format.
+        
+        Handles:
+        - "today" -> current date in ISO format
+        - "YYYY-MM-DD" -> ISO format with time
+        - Relative dates like "2nd of january, 2026" -> ISO format
+        """
+        if not date_str:
+            return None
+        
+        date_str = date_str.lower().strip()
+        
+        # Handle "today"
+        if date_str == "today":
+            now = datetime.now()
+            return now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat() + 'Z'
+        
+        # Handle "tomorrow"
+        if date_str == "tomorrow":
+            tomorrow = datetime.now() + timedelta(days=1)
+            return tomorrow.replace(hour=0, minute=0, second=0, microsecond=0).isoformat() + 'Z'
+        
+        # Handle ISO date format (YYYY-MM-DD)
+        if re.match(r'^\d{4}-\d{2}-\d{2}$', date_str):
+            try:
+                date_obj = datetime.strptime(date_str, '%Y-%m-%d')
+                return date_obj.replace(hour=0, minute=0, second=0, microsecond=0).isoformat() + 'Z'
+            except ValueError:
+                pass
+        
+        # Handle dates like "2nd of january, 2026" or "January 2, 2026"
+        date_patterns = [
+            r'(\d{1,2})(?:st|nd|rd|th)?\s+of\s+(\w+),?\s+(\d{4})',  # "2nd of january, 2026"
+            r'(\w+)\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})',      # "january 2, 2026"
+            r'(\d{1,2})[/-](\d{1,2})[/-](\d{4})',                  # "01/02/2026" or "01-02-2026"
+        ]
+        
+        month_names = {
+            'january': 1, 'february': 2, 'march': 3, 'april': 4,
+            'may': 5, 'june': 6, 'july': 7, 'august': 8,
+            'september': 9, 'october': 10, 'november': 11, 'december': 12,
+            'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4,
+            'may': 5, 'jun': 6, 'jul': 7, 'aug': 8,
+            'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12
+        }
+        
+        for pattern in date_patterns:
+            match = re.search(pattern, date_str, re.IGNORECASE)
+            if match:
+                groups = match.groups()
+                try:
+                    if len(groups) == 3:
+                        if groups[1].lower() in month_names:
+                            # Format: "2nd of january, 2026"
+                            day = int(groups[0])
+                            month = month_names[groups[1].lower()]
+                            year = int(groups[2])
+                        elif groups[0].lower() in month_names:
+                            # Format: "january 2, 2026"
+                            month = month_names[groups[0].lower()]
+                            day = int(groups[1])
+                            year = int(groups[2])
+                        else:
+                            # Format: "01/02/2026" (US format) or "01-02-2026"
+                            month = int(groups[0])
+                            day = int(groups[1])
+                            year = int(groups[2])
+                        
+                        date_obj = datetime(year, month, day)
+                        return date_obj.replace(hour=0, minute=0, second=0, microsecond=0).isoformat() + 'Z'
+                except (ValueError, KeyError):
+                    continue
+        
+        # If we can't parse it, return as-is (might already be in ISO format)
+        # But ensure it has timezone if it's a full datetime
+        if 'T' in date_str and not date_str.endswith('Z') and '+' not in date_str:
+            return date_str + 'Z'
+        
+        return date_str
     
     def _validate_and_convert_params(self, tool_name: str, params: dict) -> dict:
         """Validate and convert parameters to correct types."""
@@ -521,10 +603,20 @@ Do not include any markdown, code blocks, or text outside the JSON object."""
                 elif tool_name == "get_github_pr_context":
                     result = await get_pr_context(params.get("pr_number"))
                 elif tool_name == "get_calendar_availability":
+                    # Convert date strings to ISO format
+                    start_date = params.get("start_date")
+                    end_date = params.get("end_date")
+                    
+                    # Handle "today" and relative dates
+                    if start_date:
+                        start_date = self._normalize_date(start_date)
+                    if end_date:
+                        end_date = self._normalize_date(end_date)
+                    
                     result = await get_availability(
                         calendar_id=params.get("calendar_id", "primary"),
-                        start_date=params.get("start_date"),
-                        end_date=params.get("end_date")
+                        start_date=start_date,
+                        end_date=end_date
                     )
                 elif tool_name == "get_today_events":
                     result = await get_today_events(calendar_id=params.get("calendar_id", "primary"))
