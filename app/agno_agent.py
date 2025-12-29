@@ -128,7 +128,7 @@ class AgnoAgent:
         self.agent = Agent(
             model=model,
             db=db,  # Use 'db' parameter for BaseDb implementation
-            add_history_to_messages=True,
+            add_history_to_context=True,
             # Enabling memory as requested
             enable_user_memories=True, 
             tools=[
