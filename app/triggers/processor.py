@@ -194,21 +194,56 @@ async def _execute_notify(task_context, decision, event: TriggerEvent, mismatch:
         
         token = os.getenv("SLACK_BOT_TOKEN")
         if not token:
+            logger.warning("SLACK_BOT_TOKEN not set, cannot send notification")
             return
         
         # Build notification message
         message = _build_notification_message(task_context, decision, mismatch)
         
-        # Get user's Slack channel (DM or channel)
-        user_id = event.event_data.get("user_id")
-        # TODO: Get user's Slack user ID from user_id
+        # Determine where to send notification
+        # Option 1: Use default notification channel from env
+        channel = os.getenv("SLACK_NOTIFICATION_CHANNEL")
         
-        # For now, just log
-        logger.info(f"Notification: {message}")
+        # Option 2: Try to get user's Slack ID from GitHub username
+        if not channel:
+            github_username = event.event_data.get("user_id", "")
+            # Try to map GitHub username to Slack user ID
+            # For now, use a default channel or the first channel the bot is in
+            channel = os.getenv("SLACK_DEFAULT_CHANNEL")
+            if not channel:
+                # Fallback: try to find a channel the bot is in
+                # For now, use #general as last resort
+                channel = "#general"
+                logger.warning(f"No SLACK_NOTIFICATION_CHANNEL or SLACK_DEFAULT_CHANNEL set, using {channel}")
         
-        # TODO: Send to Slack
-        # await post_to_slack(channel, message)
+        # Send to Slack
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        }
         
+        payload = {
+            "channel": channel,
+            "text": message,
+            "blocks": _build_slack_blocks(task_context, decision, mismatch)
+        }
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                "https://slack.com/api/chat.postMessage",
+                headers=headers,
+                json=payload
+            )
+            response.raise_for_status()
+            result = response.json()
+            
+            if not result.get("ok"):
+                error = result.get("error", "unknown_error")
+                logger.error(f"Slack API error: {error}")
+                return
+            
+            logger.info(f"Notification sent to Slack channel {channel}")
+            
     except Exception as e:
         logger.error(f"Notification failed: {e}", exc_info=True)
 
@@ -230,4 +265,78 @@ def _build_notification_message(task_context, decision, mismatch: Optional[Conte
         lines.append(f"Severity: {mismatch.severity.upper()}")
     
     return "\n".join(lines)
+
+
+def _build_slack_blocks(task_context, decision, mismatch: Optional[ContextMismatch]) -> list[dict]:
+    """Build Slack Block Kit blocks for rich formatting."""
+    blocks = [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": f"📋 Task Update: {task_context.task_id}"
+            }
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"*{task_context.title}*"
+            }
+        },
+        {
+            "type": "section",
+            "fields": [
+                {
+                    "type": "mrkdwn",
+                    "text": f"*Decision:*\n{decision.action.value.upper()}"
+                },
+                {
+                    "type": "mrkdwn",
+                    "text": f"*Criticality:*\n{decision.criticality_score:.1f}"
+                }
+            ]
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"*Why:* {decision.reasoning}"
+            }
+        }
+    ]
+    
+    if mismatch:
+        blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"⚠️ *Context Mismatch:* {mismatch.reason}\n*Severity:* {mismatch.severity.upper()}"
+            }
+        })
+    
+    # Add task URL if available
+    if task_context.task_type == "pr":
+        pr_url = task_context.metadata.get("pr_data", {}).get("pr", {}).get("html_url")
+        if pr_url:
+            blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"<{pr_url}|View PR>"
+                }
+            })
+    elif task_context.task_type == "jira_issue":
+        jira_url = f"https://continuum-ai.atlassian.net/browse/{task_context.task_id}"
+        blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"<{jira_url}|View Issue>"
+            }
+        })
+    
+    blocks.append({"type": "divider"})
+    
+    return blocks
 
