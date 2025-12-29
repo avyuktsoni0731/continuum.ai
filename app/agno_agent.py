@@ -25,9 +25,9 @@ try:
     from agno.agent import Agent
     logger.info("Successfully imported agno.agent")
     
-    logger.info("Attempting to import agno.models...")
-    from agno.models import Gemini
-    logger.info("Successfully imported agno.models")
+    logger.info("Attempting to import agno.models.google...")
+    from agno.models.google import Gemini
+    logger.info("Successfully imported agno.models.google")
     
     logger.info("Attempting to import Jira tools...")
     from app.agno_tools.jira_tools import (
@@ -65,11 +65,11 @@ class AgnoAgent:
         project_id = os.getenv("GCP_PROJECT_ID", "continuum-ai-482615")
         location = os.getenv("GCP_LOCATION", "global")
         
-        # Initialize Gemini model for Agno
+        # Initialize Gemini model for Agno (via VertexAI)
         model = Gemini(
             id="gemini-3-pro-preview",
             vertexai=True,
-            project=project_id,
+            project_id=project_id,
             location=location
         )
         

@@ -23,9 +23,9 @@ except Exception as e:
     sys.exit(1)
 
 try:
-    print("\n2. Testing agno.models import...")
-    from agno.models import Gemini
-    print("   ✓ agno.models imported successfully")
+    print("\n2. Testing agno.models.google import...")
+    from agno.models.google import Gemini
+    print("   ✓ agno.models.google imported successfully")
 except Exception as e:
     print(f"   ✗ Failed: {e}")
     import traceback
