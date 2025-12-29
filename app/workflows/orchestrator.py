@@ -197,6 +197,38 @@ async def _execute_tool(tool_name: str, params: Dict[str, Any]) -> Dict[str, Any
                 "data": result.model_dump() if hasattr(result, 'model_dump') else result
             }
         
+        elif tool_name == "update_github_pr":
+            from app.tools.github import update_pull_request
+            result = await update_pull_request(**params)
+            return {
+                "success": True,
+                "data": result.model_dump() if hasattr(result, 'model_dump') else result
+            }
+        
+        elif tool_name == "update_github_pr_assignees":
+            from app.tools.github import update_pr_assignees
+            result = await update_pr_assignees(**params)
+            return {
+                "success": True,
+                "data": result if isinstance(result, dict) else result.model_dump() if hasattr(result, 'model_dump') else result
+            }
+        
+        elif tool_name == "update_github_pr_labels":
+            from app.tools.github import update_pr_labels
+            result = await update_pr_labels(**params)
+            return {
+                "success": True,
+                "data": result if isinstance(result, dict) else result.model_dump() if hasattr(result, 'model_dump') else result
+            }
+        
+        elif tool_name == "request_github_pr_review":
+            from app.tools.github import request_pr_review
+            result = await request_pr_review(**params)
+            return {
+                "success": True,
+                "data": result if isinstance(result, dict) else result.model_dump() if hasattr(result, 'model_dump') else result
+            }
+        
         else:
             return {
                 "success": False,

@@ -409,6 +409,113 @@ async def create_github_pr(
     return pr.model_dump()
 
 
+@mcp.tool
+async def update_github_pr(
+    pr_number: int,
+    title: str | None = None,
+    body: str | None = None,
+    state: str | None = None,
+    base: str | None = None
+) -> dict:
+    """
+    Update an existing pull request.
+    
+    Args:
+        pr_number: PR number
+        title: New title (optional)
+        body: New description/body (optional)
+        state: New state - "open" or "closed" (optional)
+        base: New base branch (optional)
+    
+    Returns:
+        Updated PR details
+    """
+    from app.tools.github import update_pull_request
+    pr = await update_pull_request(
+        pr_number=pr_number,
+        title=title,
+        body=body,
+        state=state,
+        base=base
+    )
+    return pr.model_dump()
+
+
+@mcp.tool
+async def update_github_pr_assignees(
+    pr_number: int,
+    assignees: list[str] | None = None,
+    remove_assignees: list[str] | None = None
+) -> dict:
+    """
+    Add or remove assignees from a pull request.
+    
+    Args:
+        pr_number: PR number
+        assignees: List of GitHub usernames to add as assignees (optional)
+        remove_assignees: List of GitHub usernames to remove as assignees (optional)
+    
+    Returns:
+        Updated assignees list with added/removed info
+    """
+    from app.tools.github import update_pr_assignees
+    return await update_pr_assignees(
+        pr_number=pr_number,
+        assignees=assignees,
+        remove_assignees=remove_assignees
+    )
+
+
+@mcp.tool
+async def update_github_pr_labels(
+    pr_number: int,
+    labels: list[str] | None = None,
+    remove_labels: list[str] | None = None
+) -> dict:
+    """
+    Add or remove labels from a pull request.
+    
+    Args:
+        pr_number: PR number
+        labels: List of label names to add (optional)
+        remove_labels: List of label names to remove (optional)
+    
+    Returns:
+        Updated labels list with added/removed info
+    """
+    from app.tools.github import update_pr_labels
+    return await update_pr_labels(
+        pr_number=pr_number,
+        labels=labels,
+        remove_labels=remove_labels
+    )
+
+
+@mcp.tool
+async def request_github_pr_review(
+    pr_number: int,
+    reviewers: list[str] | None = None,
+    team_reviewers: list[str] | None = None
+) -> dict:
+    """
+    Request review from specific users or teams for a pull request.
+    
+    Args:
+        pr_number: PR number
+        reviewers: List of GitHub usernames to request review from (optional)
+        team_reviewers: List of team slugs to request review from (optional)
+    
+    Returns:
+        Review request result with requested reviewers and teams
+    """
+    from app.tools.github import request_pr_review
+    return await request_pr_review(
+        pr_number=pr_number,
+        reviewers=reviewers,
+        team_reviewers=team_reviewers
+    )
+
+
 # =============================================================================
 # Calendar Tools
 # =============================================================================
