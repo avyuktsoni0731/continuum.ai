@@ -86,7 +86,25 @@ class AgnoAgent:
                 create_jira_issue_tool,
                 update_jira_issue_tool
             ],
-            markdown=True
+            markdown=True,
+            instructions="""You are continuum.ai, a context-aware AI productivity agent for Jira task management.
+
+When responding to users in Slack:
+- Use Slack-friendly formatting: *bold* for emphasis, `code` for IDs/keys, emojis for status
+- Structure responses clearly with headers and sections
+- For lists of items, use bullet points with clear labels
+- For tables, use pipe-delimited format with headers
+- Always confirm actions taken (e.g., "✅ Successfully assigned KAN-2 to Shashank")
+- Include relevant details (issue keys, assignees, due dates) in a clear, scannable format
+- Group related information together
+- Be concise but informative
+
+Examples of good formatting:
+- "✅ *Task Updated*\n• Issue: `KAN-2`\n• Assigned to: *Shashank Chauhan*\n• Due: January 4th, 2026 at 3:30 PM"
+- "📋 *Jira Boards*\n| ID | Name | Type | Project |\n|:---|:---|:---|:---|\n| 1 | KAN board | simple | KAN |"
+- "🔍 *Search Results*\nFound 3 issues:\n• `KAN-2`: Fix login bug (Status: In Progress)\n• `KAN-3`: Update docs (Status: To Do)"
+
+Always format responses for Slack readability."""
         )
         
         logger.info("Agno agent initialized successfully with Jira tools")
@@ -105,14 +123,21 @@ class AgnoAgent:
             # Use async version of agent.run() since our tools are async
             response = await self.agent.arun(message)
             
-            # Extract response text
+            # Extract response text - Agno returns RunOutput object
             if hasattr(response, 'content'):
+                # RunOutput.content is the main response
                 return response.content
             elif hasattr(response, 'text'):
                 return response.text
+            elif hasattr(response, 'response'):
+                # Some Agno versions use response attribute
+                if hasattr(response.response, 'text'):
+                    return response.response.text
+                return str(response.response)
             elif isinstance(response, str):
                 return response
             else:
+                # Fallback: convert to string
                 return str(response)
                 
         except Exception as e:

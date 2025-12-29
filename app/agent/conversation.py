@@ -28,47 +28,8 @@ logger = logging.getLogger(__name__)
 
 
 # Tool schemas for the LLM to understand available tools
+# NOTE: Jira tools are now handled by Agno agent - removed from here
 MCP_TOOLS = [
-    {
-        "name": "get_jira_boards",
-        "description": "List all Jira boards",
-        "parameters": {},
-        "examples": [
-            "show me jira boards",
-            "list all boards",
-            "what boards are available"
-        ]
-    },
-    {
-        "name": "get_jira_board_issues",
-        "description": "Get all issues from a specific Jira board. REQUIRES board_id (integer). Extract board ID from phrases like 'board 1', 'board ID 5', etc.",
-        "parameters": {"board_id": "integer (required)"},
-        "examples": [
-            "show me issues in board 1",
-            "what tasks are in board ID 5",
-            "get all issues from board 2"
-        ]
-    },
-    {
-        "name": "get_jira_issues",
-        "description": "Search Jira issues using JQL query. Use for custom searches like 'my tasks', 'high priority issues', etc.",
-        "parameters": {"jql": "string (JQL query)"},
-        "examples": [
-            "show me my tasks",
-            "find high priority issues",
-            "get issues assigned to me"
-        ]
-    },
-    {
-        "name": "get_jira_issue",
-        "description": "Get details of a specific Jira issue by key (e.g., PROJ-123, ABC-456). Extract issue key from text.",
-        "parameters": {"issue_key": "string (required, format: PROJ-123)"},
-        "examples": [
-            "show me PROJ-123",
-            "get details of issue ABC-456",
-            "what's the status of PROJ-789"
-        ]
-    },
     {
         "name": "get_github_pulls",
         "description": "List pull requests. Use state='open' (default), 'closed', or 'all'",
@@ -383,19 +344,7 @@ Response: {{"tools": [{{"name": "get_jira_issue", "params": {{"issue_key": "PROJ
                 continue
             
             # Type conversion based on tool requirements
-            if tool_name == "get_jira_board_issues" and param_name == "board_id":
-                try:
-                    validated["board_id"] = int(param_value)
-                except (ValueError, TypeError):
-                    logger.warning(f"Invalid board_id: {param_value}, trying to extract number")
-                    # Try to extract number from string
-                    match = re.search(r'(\d+)', str(param_value))
-                    if match:
-                        validated["board_id"] = int(match.group(1))
-                    else:
-                        raise ValueError(f"Could not extract board_id from: {param_value}")
-            
-            elif tool_name in ["get_github_pull", "get_github_pr_context", "update_github_pr",
+            if tool_name in ["get_github_pull", "get_github_pr_context", "update_github_pr",
                                "update_github_pr_assignees", "update_github_pr_labels",
                                "request_github_pr_review"] and param_name == "pr_number":
                 try:
@@ -408,20 +357,6 @@ Response: {{"tools": [{{"name": "get_jira_issue", "params": {{"issue_key": "PROJ
                         validated["pr_number"] = int(match.group(1))
                     else:
                         raise ValueError(f"Could not extract pr_number from: {param_value}")
-            
-            elif tool_name == "get_jira_issue" and param_name == "issue_key":
-                # Extract issue key (format: PROJ-123)
-                issue_key = str(param_value).strip().upper()
-                # Validate format
-                if re.match(r'^[A-Z]+-\d+$', issue_key):
-                    validated["issue_key"] = issue_key
-                else:
-                    # Try to extract from text
-                    match = re.search(r'([A-Z]+-\d+)', issue_key, re.IGNORECASE)
-                    if match:
-                        validated["issue_key"] = match.group(1).upper()
-                    else:
-                        raise ValueError(f"Invalid issue key format: {param_value}")
             
             else:
                 # Keep as-is for other parameters
@@ -449,17 +384,7 @@ Analyze the user's request and determine which MCP tool(s) to call.
 Extract ALL parameters from the message (board IDs, PR numbers, issue keys, etc.).
 Be precise with parameter extraction - look for numbers, issue keys (PROJ-123 format), etc.
 
-IMPORTANT: If the user wants to:
-- Reassign a Jira issue and update its due date → This requires MULTIPLE sequential tool calls
-- Create a Jira issue with assignee and due_time → This requires MULTIPLE sequential tool calls
-- Create an issue and check calendar → This requires MULTIPLE sequential tool calls
-
-For complex workflows, return a "workflow" field instead of "tools":
-{{
-    "workflow": "reassign_issue" or "create_issue" or "create_issue_with_pr",
-    "workflow_params": {{...}},
-    "reasoning": "..."
-}}
+NOTE: Jira-related requests are handled by a separate agent. Focus on GitHub and Calendar tools.
 
 Return ONLY valid JSON, no markdown code blocks, no explanations outside JSON."""
         
@@ -649,9 +574,7 @@ Do not include any markdown, code blocks, or text outside the JSON object."""
         results = []
         
         # Import underlying tool functions directly
-        from app.tools.jira import (
-            get_boards, get_board_issues, get_jira_issues, get_single_issue
-        )
+        # NOTE: Jira tools are now handled by Agno agent
         from app.tools.github import (
             get_pull_requests, get_pull_request, get_pr_context,
             update_pull_request, update_pr_assignees, update_pr_labels, request_pr_review
@@ -668,26 +591,15 @@ Do not include any markdown, code blocks, or text outside the JSON object."""
             
             try:
                 # Validate required parameters
-                if tool_name == "get_jira_board_issues" and not params.get("board_id"):
-                    raise ValueError("board_id is required for get_jira_board_issues")
-                if tool_name == "get_jira_issue" and not params.get("issue_key"):
-                    raise ValueError("issue_key is required for get_jira_issue")
+                # NOTE: Jira tools are now handled by Agno agent
                 if tool_name in ["get_github_pull", "get_github_pr_context", "update_github_pr", 
                                  "update_github_pr_assignees", "update_github_pr_labels", 
                                  "request_github_pr_review"] and not params.get("pr_number"):
                     raise ValueError("pr_number is required for this tool")
                 
                 # Execute tool
-                if tool_name == "get_jira_boards":
-                    result = await get_boards()
-                elif tool_name == "get_jira_board_issues":
-                    result = await get_board_issues(params.get("board_id"))
-                elif tool_name == "get_jira_issues":
-                    jql = params.get("jql", "ORDER BY created DESC")
-                    result = await get_jira_issues(jql)
-                elif tool_name == "get_jira_issue":
-                    result = await get_single_issue(params.get("issue_key"))
-                elif tool_name == "get_github_pulls":
+                # NOTE: Jira tools removed - handled by Agno
+                if tool_name == "get_github_pulls":
                     result = await get_pull_requests(state=params.get("state", "open"))
                 elif tool_name == "get_github_pull":
                     result = await get_pull_request(params.get("pr_number"))
@@ -797,217 +709,9 @@ Do not include any markdown, code blocks, or text outside the JSON object."""
             # Convert workflow_type string to enum
             workflow_enum = WorkflowType(workflow_type)
             
-            # Build workflow steps based on type
-            steps = []
-            
-            if workflow_type == "reassign_issue":
-                # Workflow: Reassign issue and update due date
-                # Step 1: Get current issue (to preserve other fields)
-                issue_key = workflow_params.get("issue_key")
-                if not issue_key:
-                    raise ValueError("issue_key is required for reassign_issue workflow")
-                
-                steps.append(WorkflowStep(
-                    step_number=1,
-                    tool_name="get_jira_issue",
-                    params={"issue_key": issue_key},
-                    description="Get current issue details"
-                ))
-                
-                # Step 2: Update assignee (if provided)
-                if workflow_params.get("assignee"):
-                    steps.append(WorkflowStep(
-                        step_number=2,
-                        tool_name="update_jira_issue",
-                        params={
-                            "issue_key": issue_key,
-                            "assignee": workflow_params["assignee"]
-                        },
-                        depends_on=[1],
-                        description=f"Reassign to {workflow_params['assignee']}"
-                    ))
-                
-                # Step 3: Update due_time (if provided)
-                # Handle both "due_date" and "due_time" params
-                due_time_str = workflow_params.get("due_time") or workflow_params.get("due_date")
-                if due_time_str:
-                    # Normalize date - handle "January 5th, 2026 by 2:30 PM" format
-                    due_time = self._normalize_date(due_time_str)
-                    # Convert to ISO datetime format if needed
-                    if due_time and 'T' not in due_time:
-                        # If only date, try to extract time from original string
-                        time_match = re.search(r'(\d{1,2}):(\d{2})\s*(AM|PM)', due_time_str, re.IGNORECASE)
-                        if time_match:
-                            hour = int(time_match.group(1))
-                            minute = int(time_match.group(2))
-                            am_pm = time_match.group(3).upper()
-                            if am_pm == "PM" and hour != 12:
-                                hour += 12
-                            elif am_pm == "AM" and hour == 12:
-                                hour = 0
-                            due_time = due_time.replace('T00:00:00Z', f'T{hour:02d}:{minute:02d}:00Z')
-                        else:
-                            # Default to 17:00:00 if no time specified
-                            due_time = due_time.replace('T00:00:00Z', 'T17:00:00Z')
-                    
-                    step_num = 3 if workflow_params.get("assignee") else 2
-                    steps.append(WorkflowStep(
-                        step_number=step_num,
-                        tool_name="update_jira_issue",
-                        params={
-                            "issue_key": issue_key,
-                            "due_time": due_time
-                        },
-                        depends_on=[step_num - 1],
-                        description=f"Update due time to {due_time}"
-                    ))
-            
-            elif workflow_type == "create_issue":
-                # Workflow: Create issue with assignee and due_time
-                project_key = workflow_params.get("project_key", "KAN")  # Default project
-                summary = workflow_params.get("summary")
-                if not summary:
-                    raise ValueError("summary is required for create_issue workflow")
-                
-                # Step 1: Create issue (with assignee and due_time if provided)
-                create_params = {
-                    "project_key": project_key,
-                    "summary": summary,
-                    "issue_type": workflow_params.get("issue_type", "Task"),
-                    "description": workflow_params.get("description"),
-                    "priority": workflow_params.get("priority")
-                }
-                
-                # Normalize due_time if provided
-                due_time_str = workflow_params.get("due_time") or workflow_params.get("due_date")
-                if due_time_str:
-                    due_time = self._normalize_date(due_time_str)
-                    if due_time and 'T' not in due_time:
-                        # Extract time if present
-                        time_match = re.search(r'(\d{1,2}):(\d{2})\s*(AM|PM)', due_time_str, re.IGNORECASE)
-                        if time_match:
-                            hour = int(time_match.group(1))
-                            minute = int(time_match.group(2))
-                            am_pm = time_match.group(3).upper()
-                            if am_pm == "PM" and hour != 12:
-                                hour += 12
-                            elif am_pm == "AM" and hour == 12:
-                                hour = 0
-                            due_time = due_time.replace('T00:00:00Z', f'T{hour:02d}:{minute:02d}:00Z')
-                        else:
-                            due_time = due_time.replace('T00:00:00Z', 'T17:00:00Z')
-                    create_params["due_time"] = due_time
-                
-                if workflow_params.get("assignee"):
-                    create_params["assignee"] = workflow_params["assignee"]
-                
-                steps.append(WorkflowStep(
-                    step_number=1,
-                    tool_name="create_jira_issue",
-                    params=create_params,
-                    description="Create Jira issue"
-                ))
-                
-                # Step 2: Check calendar availability (if due_time provided)
-                if due_time_str and workflow_params.get("assignee"):
-                    # Find user's calendar ID from assignee email
-                    assignee_email = workflow_params.get("assignee_email")  # Could be passed separately
-                    calendar_id = assignee_email or workflow_params.get("calendar_id", "primary")
-                    
-                    due_time_normalized = self._normalize_date(due_time_str)
-                    # Get availability around the due time
-                    steps.append(WorkflowStep(
-                        step_number=2,
-                        tool_name="check_calendar_availability",
-                        params={
-                            "calendar_id": calendar_id,
-                            "start_date": due_time_normalized,
-                            "end_date": due_time_normalized
-                        },
-                        depends_on=[1],
-                        description="Check assignee calendar availability"
-                    ))
-            
-            elif workflow_type == "create_issue_with_pr":
-                # Workflow: Create issue, check calendar, optionally create PR
-                # Similar to create_issue, but also creates PR if requested
-                project_key = workflow_params.get("project_key", "KAN")
-                summary = workflow_params.get("summary")
-                if not summary:
-                    raise ValueError("summary is required")
-                
-                # Step 1: Create issue
-                create_params = {
-                    "project_key": project_key,
-                    "summary": summary,
-                    "issue_type": workflow_params.get("issue_type", "Task"),
-                    "description": workflow_params.get("description"),
-                    "priority": workflow_params.get("priority")
-                }
-                
-                due_time_str = workflow_params.get("due_time") or workflow_params.get("due_date")
-                if due_time_str:
-                    due_time = self._normalize_date(due_time_str)
-                    if due_time and 'T' not in due_time:
-                        time_match = re.search(r'(\d{1,2}):(\d{2})\s*(AM|PM)', due_time_str, re.IGNORECASE)
-                        if time_match:
-                            hour = int(time_match.group(1))
-                            minute = int(time_match.group(2))
-                            am_pm = time_match.group(3).upper()
-                            if am_pm == "PM" and hour != 12:
-                                hour += 12
-                            elif am_pm == "AM" and hour == 12:
-                                hour = 0
-                            due_time = due_time.replace('T00:00:00Z', f'T{hour:02d}:{minute:02d}:00Z')
-                        else:
-                            due_time = due_time.replace('T00:00:00Z', 'T17:00:00Z')
-                    create_params["due_time"] = due_time
-                
-                if workflow_params.get("assignee"):
-                    create_params["assignee"] = workflow_params["assignee"]
-                
-                steps.append(WorkflowStep(
-                    step_number=1,
-                    tool_name="create_jira_issue",
-                    params=create_params,
-                    description="Create Jira issue"
-                ))
-                
-                # Step 2: Check calendar
-                if due_time_str:
-                    calendar_id = workflow_params.get("calendar_id", "primary")
-                    due_time_normalized = self._normalize_date(due_time_str)
-                    steps.append(WorkflowStep(
-                        step_number=2,
-                        tool_name="check_calendar_availability",
-                        params={
-                            "calendar_id": calendar_id,
-                            "start_date": due_time_normalized,
-                            "end_date": due_time_normalized
-                        },
-                        depends_on=[1],
-                        description="Check calendar availability"
-                    ))
-                
-                # Step 3: Create PR (if requested)
-                if workflow_params.get("create_pr"):
-                    pr_params = {
-                        "title": workflow_params.get("pr_title", summary),
-                        "body": workflow_params.get("pr_body", f"Related to Jira issue: $step_1.data.key"),
-                        "head": workflow_params.get("pr_head_branch"),
-                        "base": workflow_params.get("pr_base_branch", "main")
-                    }
-                    step_num = 3 if due_time_str else 2
-                    steps.append(WorkflowStep(
-                        step_number=step_num,
-                        tool_name="create_github_pr",
-                        params=pr_params,
-                        depends_on=[step_num - 1],
-                        description="Create GitHub PR"
-                    ))
-            
-            else:
-                raise ValueError(f"Unknown workflow type: {workflow_type}")
+            # NOTE: Jira workflows are now handled by Agno agent
+            # Only GitHub/Calendar workflows remain here if needed
+            raise ValueError(f"Jira workflows are now handled by Agno agent. Unknown workflow type: {workflow_type}")
             
             # Execute workflow
             result = await execute_workflow(steps)
