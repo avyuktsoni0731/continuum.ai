@@ -79,21 +79,85 @@ In AWS Console, open port 8000:
 
 ---
 
-## Optional: Cloudflare Tunnel (Free HTTPS)
+## Cloudflare Tunnel (Recommended - Free HTTPS URL)
 
-If you want HTTPS without setting up certificates:
+This gives you a **permanent HTTPS URL** that MCP clients can easily connect to!
 
-```bash
-# Install cloudflared
-wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
-chmod +x cloudflared
-sudo mv cloudflared /usr/local/bin/
+### Setup
 
-# Run tunnel (creates permanent HTTPS URL)
-cloudflared tunnel --url http://localhost:8000
+1. **Install cloudflared on EC2:**
+
+   ```bash
+   wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+   chmod +x cloudflared
+   sudo mv cloudflared /usr/local/bin/
+   ```
+
+2. **Run tunnel:**
+
+   ```bash
+   cloudflared tunnel --url http://localhost:8000
+   ```
+
+   This will output something like:
+
+   ```
+   +--------------------------------------------------------------------------------------------+
+   |  Your quick Tunnel has been created! Visit it at (it may take some time to be reachable):  |
+   |  https://random-name-1234.trycloudflare.com                                                |
+   +--------------------------------------------------------------------------------------------+
+   ```
+
+3. **Use this URL for MCP clients:**
+   ```
+   https://random-name-1234.trycloudflare.com/mcp/
+   ```
+
+### Keep Tunnel Running (systemd)
+
+Create `/etc/systemd/system/cloudflare-tunnel.service`:
+
+```ini
+[Unit]
+Description=Cloudflare Tunnel for continuum.ai
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+ExecStart=/usr/local/bin/cloudflared tunnel --url http://localhost:8000
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
 ```
 
-This gives you a permanent `https://xxx.trycloudflare.com` URL!
+Then:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable cloudflare-tunnel
+sudo systemctl start cloudflare-tunnel
+```
+
+**Note:** The free tunnel URL changes each time you restart. For a permanent URL, you'd need to set up a named tunnel (more complex but free).
+
+---
+
+## Alternative: ngrok (Simpler, but URL changes)
+
+```bash
+# Install ngrok
+wget https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz
+tar -xzf ngrok-v3-stable-linux-amd64.tgz
+sudo mv ngrok /usr/local/bin/
+
+# Run (requires free ngrok account + auth token)
+ngrok http 8000
+```
+
+Gives you: `https://xxxx-xx-xx-xx-xx.ngrok-free.app`
 
 ---
 
@@ -116,17 +180,39 @@ The `/mcp/` endpoint uses the MCP protocol. Connect using:
 }
 ```
 
-**Or use MCP Inspector:**
-
-```bash
-# Install: npm install -g @modelcontextprotocol/inspector
-mcp-inspector http://YOUR_EC2_IP:8000/mcp/
-```
-
 ### Testing Server Status
 
-If you see a 406 error in browser, that's **normal** - it means the server is running!
-The `/mcp/` endpoint requires MCP protocol headers that browsers don't send.
+**Quick test with curl:**
+
+```bash
+curl -v http://YOUR_EC2_IP:8000/mcp/
+```
+
+**Expected:** `406 Not Acceptable` = Server is working! ✅  
+(Browsers/curl don't send MCP protocol headers, so 406 is expected)
+
+### Using MCP Inspector
+
+**Note:** MCP Inspector may not support direct remote HTTP connections from Windows.
+
+**Option 1: Test on EC2 locally**
+
+```bash
+# SSH into EC2, then:
+mcp-inspector http://localhost:8000/mcp/
+```
+
+**Option 2: SSH Tunnel** (if remote inspector doesn't work)
+
+```bash
+# On your local Windows machine:
+ssh -L 8000:localhost:8000 user@YOUR_EC2_IP
+
+# Then in another terminal:
+mcp-inspector http://localhost:8000/mcp/
+```
+
+This creates a tunnel so the inspector thinks it's connecting locally.
 
 ---
 
