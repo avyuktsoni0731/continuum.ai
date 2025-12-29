@@ -10,21 +10,39 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-# Add project root to path
-project_root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(project_root))
-
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse
-import httpx
-from app.agent.conversation import ConversationalAgent
-
-# Set up logging
+# Set up logging first
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Add project root to path
+project_root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(project_root))
+
+# Load environment variables
+from dotenv import load_dotenv
+env_path = project_root / ".env"
+if env_path.exists():
+    load_dotenv(env_path)
+    logger.info(f"Loaded .env from: {env_path}")
+else:
+    # Try loading from current directory as fallback
+    load_dotenv()
+    logger.warning(f".env not found at {env_path}, trying current directory")
+
+# Verify critical env vars are loaded
+slack_token = os.getenv("SLACK_BOT_TOKEN")
+if slack_token:
+    logger.info(f"SLACK_BOT_TOKEN found (length: {len(slack_token)})")
+else:
+    logger.error("SLACK_BOT_TOKEN not found in environment!")
+
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import JSONResponse
+import httpx
+from app.agent.conversation import ConversationalAgent
 
 app = FastAPI(title="continuum.ai Slack Bot")
 
