@@ -384,5 +384,37 @@ async def get_this_week_availability(
 # =============================================================================
 
 if __name__ == "__main__":
-    mcp.run()
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Run continuum.ai MCP server")
+    parser.add_argument(
+        "--transport",
+        choices=["stdio", "http"],
+        default="stdio",
+        help="Transport type: stdio (local) or http (network)"
+    )
+    parser.add_argument(
+        "--host",
+        default="0.0.0.0",
+        help="Host to bind to (for HTTP transport, default: 0.0.0.0)"
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Port to bind to (for HTTP transport, default: 8000)"
+    )
+    
+    args = parser.parse_args()
+    
+    if args.transport == "http":
+        print(f"🚀 Starting continuum.ai MCP Server (HTTP)")
+        print(f"   Host: {args.host}")
+        print(f"   Port: {args.port}")
+        print(f"   Access at: http://{args.host if args.host != '0.0.0.0' else 'localhost'}:{args.port}/mcp/")
+        print()
+        mcp.run(transport="http", host=args.host, port=args.port)
+    else:
+        # STDIO transport (for local MCP clients)
+        mcp.run()
 
