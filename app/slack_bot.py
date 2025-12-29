@@ -44,6 +44,7 @@ from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import httpx
 from app.agent.conversation import ConversationalAgent
+from app.agno_agent import AgnoAgent, is_jira_request
 
 
 @asynccontextmanager
@@ -77,8 +78,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="continuum.ai Slack Bot", lifespan=lifespan)
 
-# Initialize agent (lazy initialization)
+# Initialize agents (lazy initialization)
 agent: Optional[ConversationalAgent] = None
+agno_agent: Optional[AgnoAgent] = None
 
 # Event deduplication: track processed events
 processed_events = set()
@@ -99,6 +101,23 @@ def get_agent() -> ConversationalAgent:
                 detail=f"Failed to initialize agent: {str(e)}"
             )
     return agent
+
+
+def get_agno_agent() -> AgnoAgent:
+    """Get or initialize the Agno agent."""
+    global agno_agent
+    if agno_agent is None:
+        try:
+            logger.info("Initializing AgnoAgent...")
+            agno_agent = AgnoAgent()
+            logger.info("AgnoAgent initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize Agno agent: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to initialize Agno agent: {str(e)}"
+            )
+    return agno_agent
 
 
 def _get_slack_headers() -> dict:
@@ -233,12 +252,28 @@ async def slack_events(request: Request):
                 logger.info("Empty message after cleaning")
                 return JSONResponse(content={"status": "ok"})
             
-            # Process with agent
+            # Process with agent - route Jira requests to Agno, others to current agent
             try:
                 logger.info(f"Processing message with agent: {user_message}")
-                agent_instance = get_agent()
-                response = await agent_instance.chat(user_message)
-                logger.info(f"Agent response: {response[:100]}...")
+                
+                # Check if this is a Jira request and route to Agno
+                if is_jira_request(user_message):
+                    try:
+                        logger.info("Routing to Agno agent (Jira request)")
+                        agno_instance = get_agno_agent()
+                        response = await agno_instance.run(user_message)
+                        logger.info(f"Agno agent response: {response[:100]}...")
+                    except Exception as agno_error:
+                        logger.warning(f"Agno agent failed, falling back to regular agent: {agno_error}")
+                        # Fallback to regular agent
+                        agent_instance = get_agent()
+                        response = await agent_instance.chat(user_message)
+                        logger.info(f"Fallback agent response: {response[:100]}...")
+                else:
+                    # Use regular agent for non-Jira requests
+                    agent_instance = get_agent()
+                    response = await agent_instance.chat(user_message)
+                    logger.info(f"Agent response: {response[:100]}...")
                 
                 # Post response to Slack with retry
                 await post_to_slack(channel, response, thread_ts=event_ts)
@@ -272,9 +307,18 @@ async def slack_commands(request: Request):
         })
     
     try:
-        # Process with agent
-        agent_instance = get_agent()
-        response = await agent_instance.chat(user_message)
+        # Process with agent - route Jira requests to Agno
+        if is_jira_request(user_message):
+            try:
+                agno_instance = get_agno_agent()
+                response = await agno_instance.run(user_message)
+            except Exception as agno_error:
+                logger.warning(f"Agno agent failed, falling back: {agno_error}")
+                agent_instance = get_agent()
+                response = await agent_instance.chat(user_message)
+        else:
+            agent_instance = get_agent()
+            response = await agent_instance.chat(user_message)
         
         return JSONResponse(content={
             "response_type": "in_channel",
