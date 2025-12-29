@@ -37,9 +37,10 @@
 
 1. Go to **"Event Subscriptions"** in sidebar
 2. Enable Events: **ON**
-3. Request URL: `https://your-domain.com/slack/events`
-   - For testing: Use ngrok/cloudflare tunnel
-   - For production: Your EC2 public URL
+3. Request URL: `http://3.108.63.43:3000/slack/events`
+   - ⚠️ **Important**: Use port **3000** (Slack bot), not 8000 (MCP server)
+   - For production with HTTPS: Use Cloudflare Tunnel (see EC2_SETUP_SIMPLE.md)
+   - For testing: HTTP is fine, but Slack may require HTTPS in some cases
 4. Subscribe to bot events:
 
    - `app_mention` - When bot is mentioned
