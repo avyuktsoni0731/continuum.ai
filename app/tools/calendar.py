@@ -7,6 +7,7 @@ Fetches user availability and events to determine free time slots.
 import os
 from datetime import datetime, timedelta
 from typing import Optional
+from pathlib import Path
 from pydantic import BaseModel
 from fastapi import HTTPException
 
@@ -70,7 +71,16 @@ def _get_credentials():
     # Try service account first (production)
     service_account_file = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
     # Also check if token.json is a service account
-    token_file = os.getenv("GOOGLE_TOKEN_FILE", "token.json")
+    token_file_env = os.getenv("GOOGLE_TOKEN_FILE", "token.json")
+    # Resolve to absolute path if relative
+    if os.path.isabs(token_file_env):
+        token_file = token_file_env
+    else:
+        # Try project root first, then current directory
+        project_root = Path(__file__).resolve().parent.parent.parent
+        token_file = str(project_root / token_file_env)
+        if not os.path.exists(token_file):
+            token_file = token_file_env  # Fallback to relative
     
     # Check if token.json is a service account
     if os.path.exists(token_file):
@@ -88,16 +98,27 @@ def _get_credentials():
         except:
             pass
     
-    # Use explicit service account file if provided
-    if service_account_file and os.path.exists(service_account_file):
-        SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
-        credentials = service_account.Credentials.from_service_account_file(
-            service_account_file, scopes=SCOPES
-        )
-        return credentials
+    # Use explicit service account file if provided (resolve path)
+    if service_account_file:
+        if not os.path.isabs(service_account_file):
+            project_root = Path(__file__).resolve().parent.parent.parent
+            service_account_file = str(project_root / service_account_file)
+        if os.path.exists(service_account_file):
+            SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
+            credentials = service_account.Credentials.from_service_account_file(
+                service_account_file, scopes=SCOPES
+            )
+            return credentials
     
     # Try OAuth token file (development)
     creds = None
+    
+    # Resolve token file path
+    if not os.path.isabs(token_file):
+        project_root = Path(__file__).resolve().parent.parent.parent
+        token_file_abs = project_root / token_file
+        if token_file_abs.exists():
+            token_file = str(token_file_abs)
     
     if os.path.exists(token_file):
         creds = Credentials.from_authorized_user_file(token_file, 
@@ -192,6 +213,16 @@ def _is_service_account() -> bool:
     # Check explicit service account file
     if service_account_file and os.path.exists(service_account_file):
         return True
+    
+    # Resolve token file path
+    token_file_env = os.getenv("GOOGLE_TOKEN_FILE", "token.json")
+    if not os.path.isabs(token_file_env):
+        project_root = Path(__file__).resolve().parent.parent.parent
+        token_file = str(project_root / token_file_env)
+        if not os.path.exists(token_file):
+            token_file = token_file_env  # Fallback to relative
+    else:
+        token_file = token_file_env
     
     # Check if token.json is a service account
     if os.path.exists(token_file):
