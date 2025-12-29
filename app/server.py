@@ -150,6 +150,104 @@ async def get_jira_fields(search: str | None = None) -> list[dict]:
     return [f.model_dump() for f in fields]
 
 
+@mcp.tool
+async def create_jira_issue(
+    project_key: str,
+    summary: str,
+    issue_type: str = "Task",
+    description: str | None = None,
+    assignee: str | None = None,
+    due_time: str | None = None,
+    priority: str | None = None,
+    labels: list[str] | None = None
+) -> dict:
+    """
+    Create a new Jira issue.
+    
+    Args:
+        project_key: Project key (e.g., "KAN")
+        summary: Issue title/summary
+        issue_type: Issue type (default: "Task")
+        description: Issue description
+        assignee: Assignee display name or email (will be looked up)
+        due_time: Due date/time in ISO format (e.g., "2026-01-02T14:00:00Z")
+        priority: Priority name (e.g., "High", "Medium", "Low")
+        labels: List of label names
+    
+    Returns:
+        Created Jira issue details
+    """
+    from app.tools.jira import create_issue
+    issue = await create_issue(
+        project_key=project_key,
+        summary=summary,
+        issue_type=issue_type,
+        description=description,
+        assignee=assignee,
+        due_time=due_time,
+        priority=priority,
+        labels=labels
+    )
+    return issue.model_dump()
+
+
+@mcp.tool
+async def update_jira_issue(
+    issue_key: str,
+    summary: str | None = None,
+    description: str | None = None,
+    assignee: str | None = None,
+    due_time: str | None = None,
+    priority: str | None = None,
+    status: str | None = None,
+    labels: list[str] | None = None
+) -> dict:
+    """
+    Update an existing Jira issue.
+    
+    Args:
+        issue_key: Issue key (e.g., "KAN-123")
+        summary: New summary/title (optional)
+        description: New description (optional)
+        assignee: New assignee display name or email (optional, will be looked up)
+        due_time: New due date/time in ISO format (optional)
+        priority: New priority name (optional)
+        status: New status name (optional - requires transition)
+        labels: New labels list (optional)
+    
+    Returns:
+        Updated Jira issue details
+    """
+    from app.tools.jira import update_issue
+    issue = await update_issue(
+        issue_key=issue_key,
+        summary=summary,
+        description=description,
+        assignee=assignee,
+        due_time=due_time,
+        priority=priority,
+        status=status,
+        labels=labels
+    )
+    return issue.model_dump()
+
+
+@mcp.tool
+async def find_jira_user(name: str) -> dict | None:
+    """
+    Find Jira user by display name or email.
+    
+    Args:
+        name: User's display name or email
+    
+    Returns:
+        User dict with accountId, displayName, emailAddress, or None if not found
+    """
+    from app.tools.jira import find_user_by_name
+    user = await find_user_by_name(name)
+    return user
+
+
 # =============================================================================
 # GitHub Tools
 # =============================================================================
@@ -280,6 +378,35 @@ async def get_github_commits(author: str | None = None, per_page: int = 10) -> l
     from app.tools.github import get_recent_commits
     commits = await get_recent_commits(author=author, per_page=per_page)
     return [c.model_dump() for c in commits]
+
+
+@mcp.tool
+async def create_github_pr(
+    title: str,
+    body: str | None = None,
+    head: str | None = None,
+    base: str = "main"
+) -> dict:
+    """
+    Create a new pull request.
+    
+    Args:
+        title: PR title
+        body: PR description/body
+        head: Source branch (required - must exist)
+        base: Target branch (default: "main")
+    
+    Returns:
+        Created PR details
+    """
+    from app.tools.github import create_pull_request
+    pr = await create_pull_request(
+        title=title,
+        body=body,
+        head=head,
+        base=base
+    )
+    return pr.model_dump()
 
 
 # =============================================================================

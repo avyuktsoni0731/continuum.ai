@@ -373,6 +373,18 @@ Analyze the user's request and determine which MCP tool(s) to call.
 Extract ALL parameters from the message (board IDs, PR numbers, issue keys, etc.).
 Be precise with parameter extraction - look for numbers, issue keys (PROJ-123 format), etc.
 
+IMPORTANT: If the user wants to:
+- Reassign a Jira issue and update its due date → This requires MULTIPLE sequential tool calls
+- Create a Jira issue with assignee and due_time → This requires MULTIPLE sequential tool calls
+- Create an issue and check calendar → This requires MULTIPLE sequential tool calls
+
+For complex workflows, return a "workflow" field instead of "tools":
+{{
+    "workflow": "reassign_issue" or "create_issue" or "create_issue_with_pr",
+    "workflow_params": {{...}},
+    "reasoning": "..."
+}}
+
 Return ONLY valid JSON, no markdown code blocks, no explanations outside JSON."""
         
         try:
@@ -1116,12 +1128,27 @@ Now format the data accordingly:"""
         intent = await self.parse_intent(user_message)
         logger.info(f"Intent parsed: {intent.get('reasoning')}")
         
-        # Execute tools
+        # Check if this is a workflow (multi-step action)
+        workflow_type = intent.get("workflow")
         tool_results = []
-        if intent.get("tools"):
+        
+        if workflow_type:
+            # Execute workflow
+            logger.info(f"Detected workflow: {workflow_type}")
+            workflow_result = await self._execute_workflow(workflow_type, intent.get("workflow_params", {}))
+            # Convert workflow result to tool_results format for compatibility
+            tool_results = [{
+                "tool": f"workflow_{workflow_type}",
+                "success": workflow_result.get("success", False),
+                "data": workflow_result.get("final_result") if workflow_result.get("success") else None,
+                "error": workflow_result.get("error"),
+                "workflow_steps": workflow_result.get("steps_executed", [])
+            }]
+        elif intent.get("tools"):
+            # Execute regular tools
             tool_results = await self.execute_tools(intent["tools"])
         else:
-            logger.warning("No tools selected by intent parser")
+            logger.warning("No tools or workflow selected by intent parser")
         
         # Apply policy engine for decision intelligence (if applicable)
         decision_traces = []
