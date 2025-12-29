@@ -49,6 +49,9 @@ app = FastAPI(title="continuum.ai Slack Bot")
 # Initialize agent (lazy initialization)
 agent: Optional[ConversationalAgent] = None
 
+# Event deduplication: track processed events
+processed_events = set()
+
 
 def get_agent() -> ConversationalAgent:
     """Get or initialize the conversational agent."""
@@ -81,8 +84,8 @@ def _get_slack_headers() -> dict:
     }
 
 
-async def post_to_slack(channel: str, text: str, thread_ts: Optional[str] = None):
-    """Post a message to a Slack channel."""
+async def post_to_slack(channel: str, text: str, thread_ts: Optional[str] = None, retries: int = 3):
+    """Post a message to a Slack channel with retry logic."""
     headers = _get_slack_headers()
     
     payload = {
@@ -95,23 +98,38 @@ async def post_to_slack(channel: str, text: str, thread_ts: Optional[str] = None
     
     logger.info(f"Posting to Slack channel {channel}: {text[:100]}...")
     
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            "https://slack.com/api/chat.postMessage",
-            headers=headers,
-            json=payload
-        )
-        response.raise_for_status()
-        result = response.json()
-        
-        # Check if Slack API returned an error (even with 200 status)
-        if not result.get("ok"):
-            error = result.get("error", "unknown_error")
-            logger.error(f"Slack API error: {error} - {result}")
-            raise Exception(f"Slack API error: {error}")
-        
-        logger.info(f"Successfully posted to Slack: {result.get('ts')}")
-        return result
+    # Retry logic for network issues
+    for attempt in range(retries):
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    "https://slack.com/api/chat.postMessage",
+                    headers=headers,
+                    json=payload
+                )
+                response.raise_for_status()
+                result = response.json()
+                
+                # Check if Slack API returned an error (even with 200 status)
+                if not result.get("ok"):
+                    error = result.get("error", "unknown_error")
+                    logger.error(f"Slack API error: {error} - {result}")
+                    raise Exception(f"Slack API error: {error}")
+                
+                logger.info(f"Successfully posted to Slack: {result.get('ts')}")
+                return result
+        except (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.ConnectError) as e:
+            if attempt < retries - 1:
+                wait_time = (attempt + 1) * 2  # Exponential backoff: 2s, 4s, 6s
+                logger.warning(f"Slack API timeout (attempt {attempt + 1}/{retries}), retrying in {wait_time}s...")
+                import asyncio
+                await asyncio.sleep(wait_time)
+            else:
+                logger.error(f"Slack API timeout after {retries} attempts: {e}")
+                raise
+        except Exception as e:
+            logger.error(f"Error posting to Slack: {e}")
+            raise
 
 
 @app.post("/slack/events")
@@ -132,31 +150,51 @@ async def slack_events(request: Request):
     if data.get("type") == "event_callback":
         event = data.get("event", {})
         event_type = event.get("type")
-        logger.info(f"Event type: {event_type}, Channel: {event.get('channel')}")
+        event_id = event.get("event_ts") or event.get("ts")  # Use timestamp as unique ID
+        event_ts = event.get("ts")
         
-        # Ignore bot messages
+        logger.info(f"Event type: {event_type}, Channel: {event.get('channel')}, Event ID: {event_id}")
+        
+        # Deduplication: Check if we've already processed this event
+        if event_id and event_id in processed_events:
+            logger.info(f"Event {event_id} already processed, skipping")
+            return JSONResponse(content={"status": "ok"})
+        
+        # Ignore bot messages (check both bot_id and user to prevent self-responses)
         if event.get("bot_id"):
-            logger.info("Ignoring bot message")
+            logger.info("Ignoring bot message (has bot_id)")
+            return JSONResponse(content={"status": "ok"})
+        
+        # Get bot user ID to check if message is from ourselves
+        bot_user_id = data.get("authorizations", [{}])[0].get("user_id")
+        if event.get("user") == bot_user_id:
+            logger.info("Ignoring message from bot user")
             return JSONResponse(content={"status": "ok"})
         
         # Handle app mentions and direct messages
         if event_type == "app_mention" or event_type == "message":
             # Skip if in a thread (to avoid loops)
-            if event.get("thread_ts"):
+            if event.get("thread_ts") and event.get("thread_ts") != event_ts:
                 logger.info("Ignoring threaded message")
                 return JSONResponse(content={"status": "ok"})
+            
+            # Mark event as processed
+            if event_id:
+                processed_events.add(event_id)
+                # Clean up old events (keep last 1000)
+                if len(processed_events) > 1000:
+                    # Remove oldest 500
+                    sorted_events = sorted(processed_events)
+                    processed_events.difference_update(sorted_events[:500])
             
             channel = event.get("channel")
             user_message = event.get("text", "").strip()
             logger.info(f"User message: {user_message}")
             
-            # Get bot user ID from event (if available)
-            bot_id = event.get("bot_id") or data.get("authorizations", [{}])[0].get("user_id")
-            
             # Remove bot mention if present (format: <@U123456>)
             import re
-            if bot_id:
-                user_message = re.sub(rf"<@{bot_id}>", "", user_message).strip()
+            if bot_user_id:
+                user_message = re.sub(rf"<@{bot_user_id}>", "", user_message).strip()
             # Also remove generic mentions
             user_message = re.sub(r"<@[A-Z0-9]+>", "", user_message).strip()
             
@@ -171,15 +209,15 @@ async def slack_events(request: Request):
                 response = await agent_instance.chat(user_message)
                 logger.info(f"Agent response: {response[:100]}...")
                 
-                # Post response to Slack
-                await post_to_slack(channel, response, thread_ts=event.get("ts"))
+                # Post response to Slack with retry
+                await post_to_slack(channel, response, thread_ts=event_ts)
                 logger.info("Successfully processed and posted response")
                 
             except Exception as e:
                 logger.error(f"Error processing message: {e}", exc_info=True)
-                error_msg = f"Sorry, I encountered an error: {str(e)}"
+                error_msg = f"Sorry, I encountered an error: {str(e)[:200]}"
                 try:
-                    await post_to_slack(channel, error_msg, thread_ts=event.get("ts"))
+                    await post_to_slack(channel, error_msg, thread_ts=event_ts, retries=2)
                 except Exception as post_error:
                     logger.error(f"Failed to post error message: {post_error}", exc_info=True)
     
