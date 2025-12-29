@@ -1,6 +1,7 @@
 httpx
 python-dotenv
 pydantic
+fastapi
 fastmcp
 google-genai
 google-api-python-client
