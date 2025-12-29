@@ -11,4 +11,6 @@ sqlalchemy
 streamlit
 uvicorn
 agno
+pymongo
+dnspython
 

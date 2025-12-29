@@ -261,7 +261,9 @@ async def slack_events(request: Request):
                     try:
                         logger.info("Routing to Agno agent (Jira/GitHub/Calendar/multi-tool request)")
                         agno_instance = get_agno_agent()
-                        response = await agno_instance.run(user_message)
+                        # Extract user ID from event for memory context
+                        user_id = event.get("user")
+                        response = await agno_instance.run(user_message, user_id=user_id)
                         logger.info(f"Agno agent response: {response[:100]}...")
                     except Exception as agno_error:
                         logger.warning(f"Agno agent failed, falling back to regular agent: {agno_error}")
@@ -311,7 +313,7 @@ async def slack_commands(request: Request):
         if should_use_agno(user_message):
             try:
                 agno_instance = get_agno_agent()
-                response = await agno_instance.run(user_message)
+                response = await agno_instance.run(user_message, user_id=user_id)
             except Exception as agno_error:
                 logger.warning(f"Agno agent failed, falling back: {agno_error}")
                 agent_instance = get_agent()

@@ -28,6 +28,11 @@ try:
     logger.info("Attempting to import agno.models.google...")
     from agno.models.google import Gemini
     logger.info("Successfully imported agno.models.google")
+
+    logger.info("Attempting to import agno.db.mongo.mongo...")
+    # Import the correct MongoDb class (implements BaseDb)
+    from agno.db.mongo.mongo import MongoDb
+    logger.info("Successfully imported agno.db.mongo.mongo")
     
     logger.info("Attempting to import Jira tools...")
     from app.agno_tools.jira_tools import (
@@ -101,9 +106,31 @@ class AgnoAgent:
             location=location
         )
         
+        # Initialize MongoDB Storage
+        mongo_url = os.getenv("MONGODB_URL")
+        db = None
+        if mongo_url:
+            try:
+                # Initialize MongoDb for both sessions and memories
+                db = MongoDb(
+                    db_url=mongo_url,
+                    db_name="continuum", 
+                    session_collection="sessions",
+                    memory_collection="agent_memory"
+                )
+                logger.info("MongoDB storage initialized")
+            except Exception as e:
+                logger.error(f"Failed to initialize MongoDB storage: {e}")
+        else:
+            logger.warning("MONGODB_URL not set, memory persistence disabled")
+
         # Create agent with Jira, GitHub, and Calendar tools (as functions)
         self.agent = Agent(
             model=model,
+            db=db,  # Use 'db' parameter for BaseDb implementation
+            add_history_to_messages=True,
+            # Enabling memory as requested
+            enable_user_memories=True, 
             tools=[
                 # Jira tools
                 get_jira_issues_tool,
@@ -186,19 +213,25 @@ REMEMBER: Use *single asterisk* for bold, never **double asterisks**. Always for
         
         logger.info("Agno agent initialized successfully with Jira, GitHub, and Calendar tools")
     
-    async def run(self, message: str) -> str:
+    async def run(self, message: str, user_id: str = None) -> str:
         """
         Process a user message and return response.
         
         Args:
             message: User's natural language message
+            user_id: Slack user ID for context retention
             
         Returns:
             Formatted response string
         """
         try:
             # Use async version of agent.run() since our tools are async
-            response = await self.agent.arun(message)
+            # Pass user_id to session_id (if provided) to give each user their own persistent memory
+            session_id = user_id if user_id else "default_session"
+            
+            logger.info(f"Running Agno agent for user: {user_id} (session: {session_id})")
+            
+            response = await self.agent.arun(message, session_id=session_id)
             
             # Extract response text - Agno returns RunOutput object
             if hasattr(response, 'content'):
