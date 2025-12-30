@@ -508,39 +508,21 @@ Do not include any markdown, code blocks, or text outside the JSON object."""
         """
         Execute a multi-step workflow.
         
+        NOTE: This method is deprecated. Multi-step workflows are now handled by Agno agent.
+        This method is kept for backward compatibility but will always raise an error.
+        
         Args:
             workflow_type: Type of workflow ("reassign_issue", "create_issue", etc.)
             workflow_params: Parameters for the workflow
         
         Returns:
-            WorkflowResult as dict
+            WorkflowResult as dict (never reached, always raises)
         """
-        try:
-            from app.workflows.orchestrator import execute_workflow
-            from app.workflows.models import WorkflowStep, WorkflowType
-            
-            # Convert workflow_type string to enum
-            workflow_enum = WorkflowType(workflow_type)
-            
-            # NOTE: Jira workflows are now handled by Agno agent
-            # Only GitHub/Calendar workflows remain here if needed
-            raise ValueError(f"Jira workflows are now handled by Agno agent. Unknown workflow type: {workflow_type}")
-            
-            # Execute workflow
-            result = await execute_workflow(steps)
-            result.workflow_type = workflow_enum
-            
-            return result.model_dump() if hasattr(result, 'model_dump') else result
-            
-        except Exception as e:
-            logger.error(f"Workflow execution failed: {e}", exc_info=True)
-            from app.workflows.models import WorkflowResult, WorkflowType
-            return WorkflowResult(
-                workflow_type=WorkflowType.REASSIGN_ISSUE,
-                success=False,
-                steps_executed=[],
-                error=str(e)
-            ).model_dump()
+        raise ValueError(
+            f"Workflows are now handled by Agno agent. "
+            f"Please route Jira/GitHub/Calendar requests to Agno. "
+            f"Workflow type requested: {workflow_type}"
+        )
     
     async def _check_user_availability(self) -> bool:
         """Check if user is currently available based on calendar."""
@@ -1005,22 +987,17 @@ Now format the data accordingly:"""
         intent = await self.parse_intent(user_message)
         logger.info(f"Intent parsed: {intent.get('reasoning')}")
         
-        # Check if this is a workflow (multi-step action)
+        # NOTE: Workflow execution is deprecated - Agno agent handles multi-step operations
+        # Check if this is a workflow (multi-step action) - should be routed to Agno
         workflow_type = intent.get("workflow")
         tool_results = []
         
         if workflow_type:
-            # Execute workflow
-            logger.info(f"Detected workflow: {workflow_type}")
-            workflow_result = await self._execute_workflow(workflow_type, intent.get("workflow_params", {}))
-            # Convert workflow result to tool_results format for compatibility
-            tool_results = [{
-                "tool": f"workflow_{workflow_type}",
-                "success": workflow_result.get("success", False),
-                "data": workflow_result.get("final_result") if workflow_result.get("success") else None,
-                "error": workflow_result.get("error"),
-                "workflow_steps": workflow_result.get("steps_executed", [])
-            }]
+            # Workflows should be handled by Agno agent, not ConversationalAgent
+            logger.warning(f"Workflow detected but ConversationalAgent doesn't handle workflows: {workflow_type}")
+            logger.warning("This request should be routed to Agno agent")
+            # Return error message
+            return f"Error: Multi-step workflows are handled by Agno agent. This request should have been routed to Agno. Workflow type: {workflow_type}"
         elif intent.get("tools"):
             # Execute regular tools
             tool_results = await self.execute_tools(intent["tools"])
