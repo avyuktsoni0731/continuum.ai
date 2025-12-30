@@ -22,20 +22,33 @@ from app.tools.calendar import get_today_events
 logger = logging.getLogger(__name__)
 
 
-async def get_user_jira_issues(user_email: Optional[str] = None, jql: Optional[str] = None) -> List[Dict]:
-    """Get Jira issues for a user."""
+async def get_user_jira_issues(user_email: Optional[str] = None, jql: Optional[str] = None, board_id: Optional[int] = None) -> List[Dict]:
+    """Get Jira issues for a user. Defaults to board 1 if no board_id specified."""
     try:
-        if jql:
-            query = jql
-        elif user_email:
-            # Try to find user and get their issues
-            query = f'assignee = "{user_email}"'
-        else:
-            # Default: get issues assigned to current user
-            query = "assignee=currentUser() AND status != Done AND status != Closed"
+        # If board_id is provided, use board issues
+        if board_id is None:
+            # Default to board 1
+            board_id = 1
         
-        issues = await get_jira_issues(query)
-        return [issue.model_dump() for issue in issues]
+        try:
+            from app.tools.jira import get_board_issues
+            issues = await get_board_issues(board_id)
+            # Filter by user if needed
+            if user_email:
+                issues = [i for i in issues if i.assignee and user_email.lower() in i.assignee.lower()]
+            return [issue.model_dump() for issue in issues]
+        except Exception as board_error:
+            logger.warning(f"Failed to get board issues, falling back to JQL: {board_error}")
+            # Fallback to JQL query
+            if jql:
+                query = jql
+            elif user_email:
+                query = f'assignee = "{user_email}"'
+            else:
+                query = "assignee=currentUser() AND status != Done AND status != Closed"
+            
+            issues = await get_jira_issues(query)
+            return [issue.model_dump() for issue in issues]
     except Exception as e:
         logger.error(f"Error getting Jira issues: {e}", exc_info=True)
         return []
@@ -77,8 +90,8 @@ async def generate_standup_summary(user_id: str, user_email: Optional[str] = Non
         yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
         today = datetime.now().strftime("%Y-%m-%d")
         
-        # Get Jira issues
-        issues = await get_user_jira_issues(user_email)
+        # Get Jira issues (defaults to board 1)
+        issues = await get_user_jira_issues(user_email, board_id=1)
         
         # Get PRs
         prs = await get_user_prs(github_username)
@@ -271,8 +284,8 @@ async def get_context_suggestions(user_id: str, user_email: Optional[str] = None
     try:
         suggestions = []
         
-        # Get user's issues
-        issues = await get_user_jira_issues(user_email)
+        # Get user's issues (defaults to board 1)
+        issues = await get_user_jira_issues(user_email, board_id=1)
         
         # Check for overdue issues
         overdue = []
