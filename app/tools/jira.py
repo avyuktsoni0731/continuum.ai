@@ -95,11 +95,15 @@ async def get_jira_issues(jql: str = "assignee=currentUser()") -> list[JiraIssue
     
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
-            # Jira v3 uses POST with JQL in body
+            # Use standard search endpoint which is more reliable
             response = await client.post(
-                f"{base_url}/rest/api/3/search/jql",
+                f"{base_url}/rest/api/3/search",
                 auth=auth,
-                json={"jql": jql, "maxResults": 50}
+                json={
+                    "jql": jql,
+                    "maxResults": 50,
+                    "fields": ["key", "summary", "status", "priority", "assignee", "description", "issuetype"]
+                }
             )
             response.raise_for_status()
         except httpx.HTTPStatusError as e:
@@ -114,20 +118,36 @@ async def get_jira_issues(jql: str = "assignee=currentUser()") -> list[JiraIssue
             )
         
         data = response.json()
+        # Standard search endpoint returns issues in "issues" array
         issues = data.get("issues", [])
         
-        return [
-            JiraIssue(
-                key=issue["key"],
-                summary=issue["fields"]["summary"],
-                status=issue["fields"]["status"]["name"],
-                priority=(issue["fields"].get("priority") or {}).get("name"),
-                assignee=(issue["fields"].get("assignee") or {}).get("displayName"),
-                description=_extract_description(issue["fields"].get("description")),
-                issue_type=(issue["fields"].get("issuetype") or {}).get("name")
-            )
-            for issue in issues
-        ]
+        result = []
+        for issue in issues:
+            try:
+                # Standard structure: issue has "key" and "fields"
+                issue_key = issue.get("key")
+                if not issue_key:
+                    continue
+                
+                fields = issue.get("fields", {})
+                
+                result.append(JiraIssue(
+                    key=issue_key,
+                    summary=fields.get("summary", "No summary"),
+                    status=fields.get("status", {}).get("name", "Unknown") if isinstance(fields.get("status"), dict) else str(fields.get("status", "Unknown")),
+                    priority=(fields.get("priority") or {}).get("name") if isinstance(fields.get("priority"), dict) else fields.get("priority"),
+                    assignee=(fields.get("assignee") or {}).get("displayName") if isinstance(fields.get("assignee"), dict) else fields.get("assignee"),
+                    description=_extract_description(fields.get("description")),
+                    issue_type=(fields.get("issuetype") or {}).get("name") if isinstance(fields.get("issuetype"), dict) else fields.get("issuetype")
+                ))
+            except Exception as e:
+                # Log and skip malformed issues
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Skipping malformed issue: {issue}, error: {e}")
+                continue
+        
+        return result
 
 
 async def get_single_issue(issue_key: str) -> JiraIssueDetail:

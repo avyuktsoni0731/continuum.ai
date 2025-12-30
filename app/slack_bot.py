@@ -422,7 +422,8 @@ async def slack_commands(request: Request):
     # Handle quick action shortcuts
     if command == "/my-tasks":
         try:
-            issues = await get_user_jira_issues()
+            # Default to board 1
+            issues = await get_user_jira_issues(board_id=1)
             if not issues:
                 return JSONResponse(content={
                     "response_type": "ephemeral",
