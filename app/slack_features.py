@@ -65,7 +65,7 @@ async def get_user_prs(github_username: Optional[str] = None) -> List[Dict]:
         all_prs = prs.get("pulls", [])
         if github_username:
             # Filter by author
-            user_prs = [pr for pr in all_prs if pr.get("user", "").lower() == github_username.lower()]
+            user_prs = [pr for pr in all_prs if (pr.get("user") or "").lower() == github_username.lower()]
             return user_prs
         return all_prs
     except Exception as e:
@@ -104,10 +104,10 @@ async def generate_standup_summary(user_id: str, user_email: Optional[str] = Non
             events = []
         
         # Categorize issues
-        completed = [i for i in issues if i.get("status", "").lower() in ["done", "closed", "resolved"]]
-        in_progress = [i for i in issues if i.get("status", "").lower() in ["in progress", "in development"]]
-        todo = [i for i in issues if i.get("status", "").lower() in ["to do", "open", "backlog"]]
-        blocked = [i for i in issues if "block" in i.get("description", "").lower() or "block" in i.get("summary", "").lower()]
+        completed = [i for i in issues if (i.get("status") or "").lower() in ["done", "closed", "resolved"]]
+        in_progress = [i for i in issues if (i.get("status") or "").lower() in ["in progress", "in development"]]
+        todo = [i for i in issues if (i.get("status") or "").lower() in ["to do", "open", "backlog"]]
+        blocked = [i for i in issues if "block" in (i.get("description") or "").lower() or "block" in (i.get("summary") or "").lower()]
         
         # Format standup
         lines = ["📊 *Daily Standup Summary*\n"]
@@ -303,7 +303,7 @@ async def get_context_suggestions(user_id: str, user_email: Optional[str] = None
             suggestions.append(f"⚠️ *{len(overdue)} overdue task(s)*: {', '.join([i.get('key', 'N/A') for i in overdue[:3]])}")
         
         # Check for high priority issues
-        high_priority = [i for i in issues if i.get("priority", "").lower() in ["high", "critical", "highest"]]
+        high_priority = [i for i in issues if (i.get("priority") or "").lower() in ["high", "critical", "highest"]]
         if high_priority:
             suggestions.append(f"🔥 *{len(high_priority)} high priority task(s)* need attention")
         
@@ -374,8 +374,8 @@ async def get_team_workload() -> str:
         for assignee, issues in sorted_assignees[:10]:  # Top 10
             count = len(issues)
             # Categorize
-            in_progress = sum(1 for i in issues if i.status.lower() in ["in progress", "in development"])
-            todo = sum(1 for i in issues if i.status.lower() in ["to do", "open"])
+            in_progress = sum(1 for i in issues if (i.status or "").lower() in ["in progress", "in development"])
+            todo = sum(1 for i in issues if (i.status or "").lower() in ["to do", "open"])
             
             # Workload indicator
             if count > 10:
