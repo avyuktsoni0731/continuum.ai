@@ -5,6 +5,8 @@
 case "$1" in
     start)
         echo "🚀 Starting continuum.ai services..."
+        # Reload systemd to pick up any service file changes
+        sudo systemctl daemon-reload
         sudo systemctl start continuum-mcp
         sudo systemctl start continuum-slack-bot
         echo "✅ Services started!"
@@ -14,12 +16,16 @@ case "$1" in
         ;;
     stop)
         echo "🛑 Stopping continuum.ai services..."
+        # Reload systemd to pick up any service file changes
+        sudo systemctl daemon-reload
         sudo systemctl stop continuum-mcp
         sudo systemctl stop continuum-slack-bot
         echo "✅ Services stopped!"
         ;;
     restart)
         echo "🔄 Restarting continuum.ai services..."
+        # Reload systemd to pick up any service file changes
+        sudo systemctl daemon-reload
         sudo systemctl restart continuum-mcp
         sudo systemctl restart continuum-slack-bot
         echo "✅ Services restarted!"
@@ -45,18 +51,27 @@ case "$1" in
         ;;
     enable)
         echo "🔧 Enabling services to start on boot..."
+        # Reload systemd to pick up any service file changes
+        sudo systemctl daemon-reload
         sudo systemctl enable continuum-mcp
         sudo systemctl enable continuum-slack-bot
         echo "✅ Services enabled!"
         ;;
     disable)
         echo "🔧 Disabling services from starting on boot..."
+        # Reload systemd to pick up any service file changes
+        sudo systemctl daemon-reload
         sudo systemctl disable continuum-mcp
         sudo systemctl disable continuum-slack-bot
         echo "✅ Services disabled!"
         ;;
+    reload)
+        echo "🔄 Reloading systemd configuration..."
+        sudo systemctl daemon-reload
+        echo "✅ Systemd configuration reloaded!"
+        ;;
     *)
-        echo "Usage: $0 {start|stop|restart|status|logs|logs-mcp|logs-slack|enable|disable}"
+        echo "Usage: $0 {start|stop|restart|status|logs|logs-mcp|logs-slack|enable|disable|reload}"
         echo ""
         echo "Commands:"
         echo "  start       - Start both services"
@@ -68,6 +83,7 @@ case "$1" in
         echo "  logs-slack  - Show Slack bot logs only"
         echo "  enable      - Enable services to start on boot"
         echo "  disable     - Disable services from starting on boot"
+        echo "  reload      - Reload systemd configuration (fixes 'changed on disk' warnings)"
         exit 1
         ;;
 esac
