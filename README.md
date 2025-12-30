@@ -119,12 +119,7 @@ Continuum.ai brings all these tools together in one intelligent interface:
 
 ### System Architecture
 
-<!-- PLACEHOLDER: Architecture Diagram -->
-
-```
-[Architecture Diagram Placeholder]
-See docs/ARCHITECTURE_DIAGRAMS.md for detailed Mermaid diagrams
-```
+![System Architecture](public/Architecture%20(2).png)
 
 **Key Components:**
 
@@ -140,12 +135,7 @@ See docs/ARCHITECTURE_DIAGRAMS.md for detailed Mermaid diagrams
 
 ### Process Flow
 
-<!-- PLACEHOLDER: Process Flow Diagram -->
-
-```
-[Process Flow Diagram Placeholder]
-See docs/ARCHITECTURE_DIAGRAMS.md for detailed flow diagrams
-```
+![Process Flow](public/Process-flow%20(2).png)
 
 ### Technology Stack
 
@@ -536,11 +526,7 @@ Use slash commands for quick access:
 
 ### EC2 Deployment
 
-<!-- PLACEHOLDER: EC2 Screenshot -->
-
-```
-[EC2 Instance Screenshot Placeholder]
-```
+![EC2 Instance](public/EC2.jpeg)
 
 **1. Launch EC2 Instance:**
 
@@ -775,16 +761,8 @@ python final_verify.py
 
 ### Screenshots
 
-<!-- PLACEHOLDER: Slack Bot Interface Screenshots -->
+![Slack Interface](public/Slacl.jpeg)
 
-```
-[Slack Bot Interface Screenshots Placeholder]
-- Main conversation interface
-- Slash commands menu
-- Interactive buttons
-- Standup summary example
-- Team workload dashboard
-```
 
 ---
 
@@ -824,29 +802,13 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-## 🙏 Acknowledgments
+## 📸 Some more Screenshots
 
-- **Agno Framework** - For scalable agent orchestration
-- **Google Gemini** - For advanced LLM capabilities
-- **FastAPI** - For the excellent web framework
-- **Slack API** - For seamless integration
+![Screenshot 1](public/1_sc.jpeg)
 
----
+![Screenshot 2](public/2_sc.jpeg)
 
-## 📞 Support
+![Screenshot 3](public/3_sc.jpeg)
 
-For questions, issues, or contributions:
+![Screenshot 4](public/4_sc.jpeg)
 
-- **GitHub Issues**: [Open an issue](https://github.com/yourusername/continuum.ai/issues)
-- **Documentation**: See the [docs/](docs/) directory
-- **Email**: [Your email]
-
----
-
-<div align="center">
-
-**Made with ❤️ by the Continuum.ai team**
-
-[⭐ Star us on GitHub](https://github.com/yourusername/continuum.ai) • [📖 Read the Docs](docs/) • [🐛 Report Bug](https://github.com/yourusername/continuum.ai/issues)
-
-</div>
